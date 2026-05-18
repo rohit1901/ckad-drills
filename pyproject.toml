@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ckad-drills"
+version = "0.1.0"
+description = "CKAD practice drills generator and interactive grader"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+ckad-drills = "ckad_drills.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

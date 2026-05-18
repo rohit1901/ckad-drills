@@ -1,0 +1,216 @@
+id,domain,topic,scenario,tasks,verify,hints
+Q01,Application Design and Build (20%),"Define, build, and modify container images",You need to deploy a custom application 'gateway' in namespace 'workloads' using a container image 'python:3.11-slim' that requires a specific command override.,"1. Create a Pod 'gateway-custom' in namespace 'workloads' using image 'python:3.11-slim'
+2. Override the default command to run 'sleep 3600'
+3. Set the working directory to '/tmp'
+4. Add two environment variables: APP_NAME=gateway and NAMESPACE=workloads
+5. Verify the container is running with the overridden command",kubectl get pod gateway-custom -n workloads && kubectl describe pod gateway-custom -n workloads,Use 'command' and 'args' in the container spec. WorkingDir sets the working directory.
+Q02,Application Design and Build (20%),"Define, build, and modify container images",Deploy 'scheduler' in 'team-alpha' with a container that needs to pull a private image 'alpine:3.18' using imagePullSecrets.,"1. Create a Secret of type 'kubernetes.io/dockerconfigjson' named 'registry-creds' in 'team-alpha'
+2. Create a Pod 'scheduler-private' using image 'alpine:3.18'
+3. Configure imagePullSecrets to use 'registry-creds'
+4. Verify the Pod can pull the image (check events if it fails)",kubectl get events -n team-alpha | grep scheduler-private,kubectl create secret docker-registry ... or manually create the Secret with .dockerconfigjson data.
+Q03,Application Design and Build (20%),"Choose and use the right workload resource (Deployment, DaemonSet, CronJob, etc.)",You need to run a background job that processes logs every 5 minutes in namespace 'default'.,"1. Create a CronJob 'backend-cron' in namespace 'default'
+2. Schedule: '*/5 * * * *'
+3. Job template: use image 'busybox:1.36', command: ['sh', '-c', 'echo Processing logs at $(date)']
+4. Set successfulJobsHistoryLimit to 3 and failedJobsHistoryLimit to 1
+5. Manually trigger one job and verify it completes",kubectl get cronjob backend-cron -n default && kubectl get jobs -n default,"CronJob spec includes schedule, jobTemplate, and history limits. Use 'kubectl create job --from=cronjob/...' to trigger."
+Q04,Application Design and Build (20%),"Choose and use the right workload resource (Deployment, DaemonSet, CronJob, etc.)",You need to run a monitoring agent on every node in the cluster that collects node-level metrics.,"1. Create a DaemonSet 'cache-agent' in namespace 'dev'
+2. Use image 'busybox:1.36'
+3. Mount the host's /proc directory at /host/proc in read-only mode
+4. Mount the host's /sys directory at /host/sys in read-only mode
+5. Ensure the agent tolerates the node-role.kubernetes.io/control-plane taint
+6. Verify a Pod runs on every node",kubectl get daemonset cache-agent -n dev && kubectl get pods -n dev -o wide,DaemonSet ensures one Pod per node. Use hostPath volumes. Add tolerations for control-plane nodes.
+Q05,Application Design and Build (20%),"Choose and use the right workload resource (Deployment, DaemonSet, CronJob, etc.)",You need to run a one-time database migration job before starting the main application.,"1. Create a Job 'proxy-migration' in namespace 'ckad-practice'
+2. Use image 'busybox:1.36' with command ['sh', '-c', 'echo DB migration completed']
+3. Set completions: 1, parallelism: 1, backoffLimit: 3
+4. Ensure the Job has a ttlSecondsAfterFinished of 60
+5. Wait for completion and verify the Job succeeded",kubectl get job proxy-migration -n ckad-practice && kubectl logs job/proxy-migration -n ckad-practice,"Job spec includes completions, parallelism, and backoffLimit. ttlSecondsAfterFinished auto-cleans completed Jobs."
+Q06,Application Design and Build (20%),"Understand multi-container Pod design patterns (sidecar, init, and others)","Create a Pod with an adapter pattern: a main app writes logs to a file, and a sidecar streams them to stdout.","1. Create Pod 'notifier-adapter' in namespace 'workloads'
+2. Main container: image 'busybox:1.36', writes logs to /var/log/app.log every 5 seconds
+3. Sidecar container: image 'busybox:1.36', runs 'tail -f /var/log/app.log'
+4. Share a volume 'log-vol' (emptyDir) mounted at /var/log in both containers
+5. Verify sidecar stdout shows the log entries",kubectl logs notifier-adapter -n workloads -c notifier-sidecar,Adapter pattern transforms output. Both containers mount the same emptyDir volume.
+Q07,Application Design and Build (20%),"Understand multi-container Pod design patterns (sidecar, init, and others)",Deploy 'api' with an init container that waits for a database service to be ready before the main app starts.,"1. Create Pod 'api-init' in namespace 'default'
+2. Init container: image 'busybox:1.36', command retries connecting to 'db-service.default.svc.cluster.local:3306' for 60 seconds
+3. Main container: image 'httpd:alpine', port 3000
+4. Verify init container completes before main container starts
+5. Check Pod status transitions: Init:0/1 -> Init:1/1 -> Running",kubectl describe pod api-init -n default | grep -A5 Init,Init containers run sequentially before app containers. Use 'for i in $(seq 1 60); do ...; sleep 1; done' for retry logic.
+Q08,Application Design and Build (20%),"Understand multi-container Pod design patterns (sidecar, init, and others)",Create an ambassador pattern Pod where a local proxy container forwards requests to an external service.,"1. Create Pod 'cache-ambassador' in namespace 'default'
+2. Ambassador container: image 'nginx:alpine', listens on port 8080
+3. Configure nginx to proxy_pass to an upstream (use a simple server block)
+4. Main app container: image 'busybox:1.36', runs 'wget -qO- http://localhost:8080' in a loop
+5. Verify the app can reach the external service through the ambassador",kubectl logs cache-ambassador -n default -c cache-app,"Ambassador pattern proxies external connections. The main app talks to localhost, ambassador forwards outward."
+Q09,Application Design and Build (20%),Utilize persistent and ephemeral volumes,Deploy a stateful application 'processor' that requires persistent storage for its data directory.,"1. Create a PVC 'processor-pvc' in namespace 'team-alpha' requesting 1Gi storage with StorageClass 'local-path'
+2. Create a Deployment 'processor-db' with 1 replica using image 'redis:7-alpine'
+3. Mount the PVC at /data in the container
+4. Write a test key to Redis
+5. Delete the Pod and verify the data persists when the new Pod starts",kubectl get pvc processor-pvc -n team-alpha && kubectl exec deployment/processor-db -n team-alpha -- redis-cli GET testkey,"Use volumeClaimTemplates for StatefulSets, but for Deployment use a pre-created PVC. StatefulSet is preferred for stateful apps."
+Q10,Application Design and Build (20%),Utilize persistent and ephemeral volumes,Create a Pod that uses both ephemeral (emptyDir) and persistent storage.,"1. Create Pod 'notifier-mixed' in namespace 'team-beta' using image 'nginx:alpine'
+2. Add an emptyDir volume 'cache' mounted at /var/cache/nginx
+3. Add a hostPath volume 'logs' mounted at /var/log/nginx (host path: /tmp/nginx-logs)
+4. Verify both mounts exist inside the container
+5. Write a file to each mount and verify from host or container",kubectl exec notifier-mixed -n team-beta -- df -h | grep -E 'cache|logs',emptyDir is ephemeral and shared between containers. hostPath mounts a directory from the node filesystem.
+Q11,Application Design and Build (20%),Utilize persistent and ephemeral volumes,Create a StatefulSet with persistent volume claims for each replica.,"1. Create a headless Service 'cache' in namespace 'workloads' (clusterIP: None, ports: 8080)
+2. Create a StatefulSet 'cache-stateful' with 3 replicas using image 'nginx:alpine'
+3. Add a volumeClaimTemplate requesting 500Mi from StorageClass 'standard'
+4. Mount the volume at /usr/share/nginx/html
+5. Write unique index.html content in each Pod
+6. Verify each Pod has its own persistent storage",kubectl get pvc -n workloads | grep cache-stateful && kubectl exec cache-stateful-0 -n workloads -- cat /usr/share/nginx/html/index.html,StatefulSet + volumeClaimTemplate creates a PVC per replica. Headless service provides stable network identity.
+Q12,Application Deployment (20%),Use Kubernetes primitives to implement common deployment strategies (blue/green or canary),Implement a blue/green deployment for 'notifier' in namespace 'ckad-practice'.,"1. Create Deployment 'notifier-blue' with 3 replicas, image 'busybox:1.36', labels: version=blue
+2. Create Service 'notifier' selector: version=blue, port 8080
+3. Create Deployment 'notifier-green' with 3 replicas, image 'busybox:latest', labels: version=green
+4. Verify green is ready, then switch Service selector to version=green
+5. Verify traffic now routes to green Pods",kubectl get endpoints notifier -n ckad-practice && kubectl describe svc notifier -n ckad-practice | grep Selector,"Blue/green: two parallel deployments, one Service. Switch selector to cut over instantly."
+Q13,Application Deployment (20%),Use Kubernetes primitives to implement common deployment strategies (blue/green or canary),Implement a canary deployment for 'api' in namespace 'team-alpha'.,"1. Create Deployment 'api-stable' with 9 replicas, image 'alpine:3.18', labels: track=stable
+2. Create Service 'api' selector: app=api, port 3306
+3. Create Deployment 'api-canary' with 1 replica, image 'alpine:latest', labels: track=canary
+4. Verify both deployments are exposed through the same Service
+5. Scale canary to 5 and stable to 5 to complete the rollout
+6. Delete stable deployment when canary is verified",kubectl get pods -n team-alpha -l app=api --show-labels && kubectl get endpoints api -n team-alpha,Canary: both deployments share the same app label but have different track labels. Service selects only app label.
+Q14,Application Deployment (20%),Understand Deployments and how to perform rolling updates,Perform a controlled rolling update of 'scheduler' in namespace 'workloads'.,"1. Create Deployment 'scheduler' with 4 replicas, image 'redis:7-alpine', port 9000
+2. Set strategy: RollingUpdate, maxSurge=2, maxUnavailable=1
+3. Update the image to 'redis:latest'
+4. Monitor rollout status with 'kubectl rollout status'
+5. Verify all Pods use the new image
+6. Rollback to previous revision and confirm old image is restored",kubectl rollout history deployment/scheduler -n workloads && kubectl get pods -n workloads -o jsonpath='{.items[*].spec.containers[*].image}',maxSurge controls how many extra Pods can be created. maxUnavailable controls how many Pods can be down during update.
+Q15,Application Deployment (20%),Use the Helm package manager to deploy existing packages,Deploy a chart from a Helm repository into namespace 'dev'.,"1. Add the bitnami Helm repository: helm repo add bitnami https://charts.bitnami.com/bitnami
+2. Update repo index: helm repo update
+3. Search for a 'nginx' chart in the bitnami repo
+4. Install the chart as 'backend-nginx' in namespace 'dev' with --create-namespace
+5. Verify the release with 'helm list -n dev'
+6. Upgrade the release to set replicaCount=3
+7. Rollback the release to revision 1",helm list -n dev && helm history backend-nginx -n dev,"Helm manages releases with revisions. Use 'helm install', 'helm upgrade', 'helm rollback', 'helm uninstall'."
+Q16,Application Deployment (20%),Use the Helm package manager to deploy existing packages,Create a simple Helm chart for 'processor' and deploy it.,"1. Create a new Helm chart: helm create processor-chart
+2. Modify values.yaml to use image 'nginx:alpine' and replicaCount=2
+3. Update templates/deployment.yaml to add a readiness probe on port 80
+4. Package the chart: helm package processor-chart
+5. Install the chart in namespace 'team-alpha'
+6. Verify the deployed application",helm list -n team-alpha && kubectl get deployment -n team-alpha | grep processor,Helm charts use Go templates. values.yaml feeds variables into templates.
+Q17,Application Deployment (20%),Kustomize,Use Kustomize to manage environment-specific configurations for 'webapp'.,"1. Create a base directory with a Deployment manifest for 'webapp' (image: nginx:alpine, 2 replicas)
+2. Create an overlay for 'staging' that changes replicas to 3 and adds resource limits
+3. Create an overlay for 'prod' that changes replicas to 5 and adds a nodeSelector
+4. Build the staging overlay: kustomize build overlays/staging
+5. Apply the prod overlay: kubectl apply -k overlays/prod
+6. Verify the differences between environments",kustomize build overlays/prod | kubectl diff -f - && kubectl get deployment webapp -n prod,"Kustomize uses bases + overlays. kustomization.yaml defines resources, patches, and common customizations."
+Q18,Application Observability and Maintenance (15%),Understand API deprecations,Identify and migrate deprecated API usage for 'backend' in namespace 'staging'.,"1. Create a Pod manifest using an older API version that is deprecated (e.g., apps/v1beta1 if available, or simulate by checking current versions)
+2. Use 'kubectl api-resources' to list available API versions
+3. Check if any deprecated APIs are in use with 'kubectl get --raw /apis'
+4. Update the manifest to use the current stable API version
+5. Apply the updated manifest and verify",kubectl api-versions | grep apps && kubectl get pod backend -n staging,Check 'kubectl api-resources' and 'kubectl explain' for current API versions. The CKAD exam tests v1.35.
+Q19,Application Observability and Maintenance (15%),Implement probes and health checks,Create a robust health checking setup for 'frontend' in namespace 'dev'.,"1. Create Deployment 'frontend' with 2 replicas, image 'nginx:alpine', port 5000
+2. Add livenessProbe: HTTP GET /healthz, initialDelaySeconds=10, periodSeconds=5
+3. Add readinessProbe: HTTP GET /ready, initialDelaySeconds=5, periodSeconds=3
+4. Add startupProbe: HTTP GET /startup, failureThreshold=18, periodSeconds=5
+5. Verify probes are configured with 'kubectl describe pod'
+6. Intentionally return 500 from /healthz and observe restart behavior",kubectl get pod -n dev -l app=frontend && kubectl describe pod -n dev -l app=frontend | grep -A5 Events,Startup probe disables liveness and readiness until it succeeds. This prevents premature restarts of slow-starting apps.
+Q20,Application Observability and Maintenance (15%),Implement probes and health checks,Configure TCP socket and exec probes for 'notifier' in namespace 'team-alpha'.,"1. Create Pod 'notifier-tcp' in namespace 'team-alpha' running 'busybox:1.36' on port 9000
+2. Add livenessProbe: TCP socket check on port 9000, initialDelaySeconds=15
+3. Add readinessProbe: exec command ['test', '-f', '/tmp/ready']
+4. Exec into the Pod and create /tmp/ready to mark it ready
+5. Remove /tmp/ready and observe the Pod becoming not-ready
+6. Restore /tmp/ready and verify it becomes ready again",kubectl get pod notifier-tcp -n team-alpha && kubectl exec notifier-tcp -n team-alpha -- touch /tmp/ready,TCP probes check port connectivity. Exec probes run commands inside the container. Use 'kubectl exec' to manipulate readiness.
+Q21,Application Observability and Maintenance (15%),Use built-in CLI tools to monitor Kubernetes applications,Monitor resource usage and status of 'processor' in namespace 'team-beta'.,"1. Create Deployment 'processor' with 3 replicas and resource requests
+2. Use 'kubectl top pod -n team-beta' to check CPU/memory usage (requires metrics-server)
+3. Use 'kubectl top node' to check node-level resources
+4. Watch Pod status changes with 'kubectl get pods -n team-beta -w'
+5. Sort Pods by restart count: 'kubectl get pods -n team-beta --sort-by='.status.containerStatuses[0].restartCount''
+6. Use 'kubectl get events -n team-beta --sort-by='.lastTimestamp' | tail -20'",kubectl top pod -n team-beta 2>/dev/null || echo 'metrics-server not available - simulate with kubectl get pods',"metrics-server provides top metrics. If not installed, focus on kubectl get/describe/events commands."
+Q22,Application Observability and Maintenance (15%),Utilize container logs,Collect and analyze logs from 'processor' in namespace 'prod'.,"1. Create Deployment 'processor' that outputs structured logs to stdout
+2. View logs from a single Pod: 'kubectl logs <pod-name> -n prod'
+3. View logs from all Pods in the Deployment: 'kubectl logs -l app=processor -n prod'
+4. Stream logs in real-time: 'kubectl logs -f deployment/processor -n prod'
+5. View previous container logs (after a restart): 'kubectl logs <pod-name> -n prod --previous'
+6. Save logs to a file for analysis",kubectl logs -l app=processor -n prod --tail=10,Use labels to aggregate logs across replicas. --previous shows logs from crashed containers.
+Q23,Application Observability and Maintenance (15%),Debugging in Kubernetes,A Deployment 'api' in namespace 'ckad-practice' is failing. Debug and fix it.,"1. Investigate why Pods are in CrashLoopBackOff using 'kubectl describe pod' and 'kubectl logs'
+2. Check for common issues: wrong image name, missing ConfigMap/Secret, resource limits too low
+3. Verify events with 'kubectl get events -n ckad-practice | grep api'
+4. Fix the identified issue (e.g., correct the image tag or add missing env var)
+5. Verify the Deployment recovers and Pods reach Running state",kubectl get deployment api -n ckad-practice && kubectl get pods -n ckad-practice -l app=api,Debugging flow: describe pod -> check events -> check logs -> fix manifest -> re-apply.
+Q24,Application Observability and Maintenance (15%),Debugging in Kubernetes,A Service 'frontend' in namespace 'team-alpha' is not routing traffic correctly.,"1. Verify Service exists and has endpoints: 'kubectl get svc frontend -n team-alpha' and 'kubectl get endpoints frontend -n team-alpha'
+2. Check if selector labels match Pod labels
+3. Verify Pods are ready (readiness probe passing)
+4. Test connectivity from a debug Pod: 'kubectl run debug --rm -it --image=busybox -n team-alpha -- wget -qO- http://frontend'
+5. Check for NetworkPolicy blocking traffic
+6. Fix any mismatched labels or policies and verify",kubectl get endpoints frontend -n team-alpha && kubectl get pods -n team-alpha -l app=frontend -o wide,No endpoints = selector mismatch or no ready Pods. Use a debug Pod to test network paths.
+Q25,"Application Environment, Configuration and Security (25%)","Discover and use resources that extend Kubernetes (CRD, Operators)",Work with a Custom Resource Definition for 'api' in namespace 'prod'.,"1. List existing CRDs: 'kubectl get crds'
+2. Inspect a specific CRD: 'kubectl get crd <crd-name> -o yaml'
+3. Create a custom resource instance of an existing CRD (if available) or describe how you would
+4. View the CRD's defined schema and validation
+5. Explain the relationship between CRDs and Operators",kubectl get crds && kubectl get crd <crd-name> -o jsonpath='{.spec.names}',CRDs extend the Kubernetes API. Operators use CRDs to manage complex applications.
+Q26,"Application Environment, Configuration and Security (25%)","Understand authentication, authorization, and admission control",Set up RBAC for 'proxy' in namespace 'ckad-practice' with fine-grained permissions.,"1. Create a Role 'proxy-role' in namespace 'ckad-practice' allowing get/list/watch on Pods and Services only
+2. Create a RoleBinding 'proxy-binding' associating the Role with user 'developer'
+3. Verify permissions with 'kubectl auth can-i get pods --as=developer -n ckad-practice'
+4. Verify 'kubectl auth can-i delete pods --as=developer -n ckad-practice' returns 'no'
+5. Create a ClusterRole for reading nodes, bind it to group 'devops'
+6. Explain the difference between Role (namespace-scoped) and ClusterRole (cluster-scoped)",kubectl auth can-i get pods --as=developer -n ckad-practice && kubectl auth can-i delete pods --as=developer -n ckad-practice,"Role is namespace-scoped. ClusterRole is cluster-wide. Use RoleBinding for Role, ClusterRoleBinding for ClusterRole."
+Q27,"Application Environment, Configuration and Security (25%)","Understand requests, limits, quotas",Enforce resource constraints for namespace 'team-alpha'.,"1. Create a ResourceQuota 'cache-quota' in namespace 'team-alpha' with:
+   - requests.cpu=2, requests.memory=4Gi
+   - limits.cpu=4, limits.memory=8Gi
+   - pods=10, services=5
+2. Create a LimitRange 'cache-limits' in namespace 'team-alpha' with:
+   - default CPU limit=500m, default memory limit=512Mi
+   - default request CPU=100m, default request memory=128Mi
+3. Create a Deployment that exceeds the quota and observe the failure
+4. Adjust the Deployment to fit within quota and verify it runs",kubectl get resourcequota cache-quota -n team-alpha && kubectl describe resourcequota cache-quota -n team-alpha,ResourceQuota limits total resources in a namespace. LimitRange sets defaults for containers.
+Q28,"Application Environment, Configuration and Security (25%)",Understand ConfigMaps,Configure 'webapp' in namespace 'prod' using ConfigMaps in multiple ways.,"1. Create ConfigMap 'webapp-config' from literal values: APP_NAME=webapp, LOG_LEVEL=debug, PORT=6379
+2. Create a second ConfigMap 'webapp-files' from a file (create a local file 'settings.conf' with key=value data first)
+3. Create a Pod that consumes 'webapp-config' as environment variables
+4. Mount 'webapp-files' as a volume at /etc/config in the same Pod
+5. Verify env vars and mounted files from inside the container
+6. Update the ConfigMap and observe if changes reflect in the Pod (env vars don't update, mounted files do)",kubectl exec webapp-pod -n prod -- env | grep APP_NAME && kubectl exec webapp-pod -n prod -- ls /etc/config,ConfigMap as env: updates require Pod restart. ConfigMap as volume: updates reflect automatically (after kubelet sync period).
+Q29,"Application Environment, Configuration and Security (25%)",Define resource requirements,Properly size 'notifier' in namespace 'team-beta' with CPU and memory constraints.,"1. Create Deployment 'notifier' with image 'nginx:alpine', 2 replicas
+2. Set resource requests: CPU=200m, memory=1Gi
+3. Set resource limits: CPU=500m, memory=512Mi
+4. Verify resources are set with 'kubectl describe pod'
+5. Check if the Pod is assigned to a node with sufficient resources
+6. Explain the difference between requests (scheduling) and limits (runtime enforcement)",kubectl get pod -n team-beta -l app=notifier -o jsonpath='{.items[0].spec.containers[0].resources}',Requests are used by scheduler. Limits are enforced by kubelet/Cgroups. Always set both.
+Q30,"Application Environment, Configuration and Security (25%)",Create & consume Secrets,Securely manage sensitive data for 'cache' in namespace 'team-alpha'.,"1. Create Secret 'cache-secrets' in namespace 'team-alpha' with keys: TLS_CERT, API_KEY, AUTH_TOKEN (use generic type with --from-literal)
+2. Create a Pod that consumes the Secret as environment variables
+3. Create a second Pod that mounts the Secret as files in /etc/secrets
+4. Verify env vars don't show values in 'kubectl describe pod' (only reference the Secret)
+5. Verify files in /etc/secrets contain the decoded values
+6. Create a TLS Secret from certificate files (simulate with self-signed cert if needed)",kubectl get secret cache-secrets -n team-alpha -o jsonpath='{.data}' && kubectl exec cache-pod -n team-alpha -- cat /etc/secrets/TLS_CERT,Secrets are base64-encoded in etcd. Mounted as files = decoded automatically. As env vars = available decoded in container.
+Q31,"Application Environment, Configuration and Security (25%)",Understand ServiceAccounts,Configure a dedicated ServiceAccount for 'notifier' in namespace 'team-alpha'.,"1. Create ServiceAccount 'notifier-sa' in namespace 'team-alpha'
+2. Create a Role allowing get/list on ConfigMaps in 'team-alpha'
+3. Create a RoleBinding binding 'notifier-sa' to the Role
+4. Create a Pod that uses 'notifier-sa' as its serviceAccountName
+5. From inside the Pod, attempt to list ConfigMaps (should succeed) and Pods (should fail)
+6. View the auto-mounted token at /var/run/secrets/kubernetes.io/serviceaccount/token",kubectl auth can-i get configmaps --as=system:serviceaccount:team-alpha:notifier-sa -n team-alpha && kubectl auth can-i get pods --as=system:serviceaccount:team-alpha:notifier-sa -n team-alpha,Default ServiceAccount has minimal permissions. Custom ServiceAccounts need explicit RoleBindings.
+Q32,"Application Environment, Configuration and Security (25%)","Understand Application Security (SecurityContexts, Capabilities, etc.)",Harden 'cache' in namespace 'ckad-practice' with comprehensive security settings.,"1. Create Pod 'cache-secure' in namespace 'ckad-practice' with image 'python:3.11-slim'
+2. Set pod-level SecurityContext: runAsNonRoot=true, seccompProfile type=RuntimeDefault
+3. Set container-level SecurityContext: readOnlyRootFilesystem=true, allowPrivilegeEscalation=false, capabilities drop=['ALL']
+4. Add capabilities add=['NET_BIND_SERVICE'] if the app needs to bind to privileged ports
+5. Verify the container runs as a non-root user
+6. Verify the root filesystem is read-only and the container cannot write to /",kubectl exec cache-secure -n ckad-practice -- id && kubectl exec cache-secure -n ckad-practice -- touch /testfile 2>&1 | grep 'Read-only file system',"SecurityContext at pod level affects all containers. Container level overrides pod level. Drop ALL capabilities, then add only what's needed."
+Q33,"Application Environment, Configuration and Security (25%)","Understand Application Security (SecurityContexts, Capabilities, etc.)",Run 'processor' as a specific user with restricted permissions in namespace 'team-beta'.,"1. Create Pod 'processor-restricted' in namespace 'team-beta' with image 'nginx:alpine'
+2. Set runAsUser=1000, runAsGroup=1000, fsGroup=1000 at pod level
+3. Verify the nginx process runs as UID 1000 inside the container
+4. Mount an emptyDir volume and verify files are created with group ownership 1000
+5. Add runAsNonRoot=true and verify the Pod fails if the image tries to run as root",kubectl exec processor-restricted -n team-beta -- ps aux && kubectl exec processor-restricted -n team-beta -- ls -la /usr/share/nginx/html,fsGroup sets ownership for volumes. runAsUser overrides the image's default user.
+Q34,Services and Networking (20%),Demonstrate basic understanding of NetworkPolicies,Restrict network traffic for 'processor' in namespace 'default'.,"1. Create a default-deny NetworkPolicy in namespace 'default' that blocks all ingress and egress
+2. Create an allow NetworkPolicy 'processor-allow' that allows ingress to Pods with label app=processor only from Pods with label app=frontend in the same namespace
+3. Allow egress from 'processor' Pods to port 3000 on CIDR 10.0.0.0/8 only
+4. Test connectivity from allowed and denied sources using debug Pods
+5. Verify allowed traffic succeeds and denied traffic times out",kubectl get networkpolicy -n default && kubectl describe networkpolicy processor-allow -n default,Default deny: empty ingress/egress rules with policyTypes. Always specify both policyTypes if you want to control both directions.
+Q35,Services and Networking (20%),Demonstrate basic understanding of NetworkPolicies,Allow cross-namespace communication for 'processor' between 'default' and 'ckad-practice'.,"1. In namespace 'default', create a Pod with label app=processor-backend
+2. In namespace 'ckad-practice', create a Pod with label app=processor-frontend
+3. Create a NetworkPolicy in 'default' allowing ingress from namespace 'ckad-practice' to Pods labeled app=processor-backend
+4. Test connectivity from the frontend Pod to the backend Pod
+5. Verify that Pods from other namespaces cannot reach the backend",kubectl get networkpolicy -n default && kubectl exec -n ckad-practice processor-frontend -- wget -qO- http://processor-backend.default.svc.cluster.local,Use namespaceSelector in NetworkPolicy to allow traffic from specific namespaces.
+Q36,Services and Networking (20%),Provide and troubleshoot access to applications via services,Expose 'webapp' in namespace 'team-beta' using multiple Service types.,"1. Create Deployment 'webapp' with 3 replicas and label app=webapp
+2. Create ClusterIP Service 'webapp-internal' on port 5000, targetPort 80
+3. Create NodePort Service 'webapp-nodeport' on port 5000, nodePort 30080
+4. Verify endpoints are populated for both Services
+5. Test internal access from a Pod in the same namespace
+6. Explain when to use ClusterIP vs NodePort vs LoadBalancer",kubectl get svc -n team-beta | grep webapp && kubectl get endpoints -n team-beta | grep webapp,ClusterIP = internal only. NodePort = exposes on each node's IP. LoadBalancer = cloud provider external IP.
+Q37,Services and Networking (20%),Provide and troubleshoot access to applications via services,Troubleshoot service discovery between 'processor' and 'cache' in namespace 'team-alpha'.,"1. Create Deployment and Service for 'processor' with selector app=processor
+2. Create Deployment and Service for 'cache' with selector app=cache
+3. Verify DNS resolution works: 'nslookup cache.team-alpha.svc.cluster.local' from a debug Pod
+4. Test connectivity with curl/wget between the two Services
+5. Intentionally break the selector label on one Service and observe endpoints disappear
+6. Fix the selector and verify endpoints return",kubectl get endpoints processor cache -n team-alpha && kubectl run debug --rm -it -n team-alpha --image=busybox -- nslookup cache,Service DNS: <service>.<namespace>.svc.cluster.local. Endpoints disappear if selector doesn't match Pods.
+Q38,Services and Networking (20%),Use Ingress rules to expose applications,Expose 'gateway' and 'processor' externally using Ingress in namespace 'staging'.,"1. Deploy 'gateway' and 'processor' each with their own ClusterIP Service
+2. Create an Ingress resource 'gateway-ingress' routing host 'gateway.example.com' to gateway service
+3. Add a second rule in the same Ingress routing path '/processor' to processor service
+4. Verify the Ingress has an address assigned (if ingress controller is running)
+5. Test with curl using the host header: 'curl -H ""Host: gateway.example.com"" http://<ingress-ip>/'
+6. Add TLS configuration with a self-signed certificate (optional advanced)",kubectl get ingress -n staging && kubectl describe ingress gateway-ingress -n staging,"Ingress needs an Ingress controller (e.g., NGINX Ingress). For kind, install with 'kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml'."

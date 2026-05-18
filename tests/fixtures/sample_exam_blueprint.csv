@@ -1,0 +1,3 @@
+exam_id,id,domain,topic,scenario,tasks,verify,hints
+EX01,Q01,Domain A,Topic A,Blueprint Scenario A,Blueprint Tasks A,verify-a,Hint A
+EX02,Q02,Domain B,Topic B,Blueprint Scenario B,Blueprint Tasks B,verify-b,Hint B
