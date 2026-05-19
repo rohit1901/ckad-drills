@@ -6,11 +6,57 @@ A local CLI tool for generating CKAD-style Kubernetes drills from CSV question b
 
 ### Prerequisites
 - Python 3.10+
-- `kubectl` configured against a reachable Kubernetes cluster
-- Access to the current kube-context you want to practice against
+- [Docker](https://docs.docker.com/get-docker/) running locally
+- [`kind`](https://kind.sigs.k8s.io/docs/user/quick-start/#installation) for spinning up the local cluster
+- [`kubectl`](https://kubernetes.io/docs/tasks/tools/) on your `PATH`
+
+You do not need a pre-existing remote cluster. The repo ships a `kind-config.yaml` and helper scripts that build a local 1 control-plane + 2 worker cluster for you.
+
+### Set up the local kind cluster
+Before running any drills, bring up the local Kubernetes cluster:
+
+- `make kind-up`
+
+This runs `scripts/kind-setup.sh`, which:
+- verifies `docker`, `kind`, and `kubectl` are installed and on your `PATH`
+- verifies the Docker daemon is reachable
+- creates a kind cluster named `ckad-practice` from `kind-config.yaml` (skips creation if it already exists)
+- switches your `kubectl` context to `kind-ckad-practice`
+- waits for all nodes to become `Ready`
+
+If any preflight check fails, the script exits with a clear error message and a hint telling you what to fix (missing tool, Docker not running, missing config file, cluster unhealthy, etc.).
+
+You can override the defaults:
+
+- `make kind-up KIND_CLUSTER_NAME=my-cluster KIND_CONFIG=./kind-config.yaml`
+- `./scripts/kind-setup.sh my-cluster ./kind-config.yaml`
+
+### Tear down the local kind cluster
+When you are done practicing, remove the local cluster and its `kubectl` context:
+
+- `make kind-down`
+
+This runs `scripts/kind-cleanup.sh`, which:
+- deletes the named kind cluster (if it exists)
+- removes the matching `kubectl` context, cluster, and user entries
+- removes any stray kind containers left behind by a crashed run
+- **lists any *other* kind clusters still present on your machine** so leftovers don't go unnoticed
+
+Override the cluster name the same way:
+
+- `make kind-down KIND_CLUSTER_NAME=my-cluster`
+- `./scripts/kind-cleanup.sh my-cluster`
+
+#### Wiping every kind cluster
+If the cleanup script reports leftover clusters (for example a cluster literally named `kind`, which is what `kind create cluster` produces when no `--name` is given), you have two options:
+
+- delete them one by one: `make kind-down KIND_CLUSTER_NAME=<name>`
+- wipe them all at once: `make kind-nuke` (equivalent to `./scripts/kind-cleanup.sh --all`)
+
+`make kind-nuke` will iterate over every cluster reported by `kind get clusters` and delete it, along with its kubectl context and any stray containers.
 
 ### Install
-You can set up the project with:
+You can set up the Python project with:
 
 - `make install`
 
@@ -31,6 +77,8 @@ To start a general drill session from the full question bank:
 To start a balanced exam-style session:
 
 - `make exam`
+
+Both targets depend on `make kind-up`, so the local cluster is created automatically (or reused if already up) before drills start.
 
 Exam mode is dynamic: it uses `ckad_balanced_exam.csv` as a blueprint for balanced coverage, then selects matching questions from the full question bank. That means you can get a different exam set on different runs while keeping the intended balance.
 
@@ -88,9 +136,24 @@ To run the automated unit test suite:
 
 - `make test`
 
-To run cleanup only with the default convenience target:
+Cleanup is tiered, from least to most destructive. Pick the one that matches what you want gone:
 
-- `make cleanup`
+- `make cleanup-objects` — delete drill resources inside the practice namespace (keeps the namespace and the cluster).
+- `make cleanup-namespace` — delete the entire practice namespace (keeps the kind cluster).
+- `make kind-cleanup` (alias for `make kind-down`) — delete the local kind cluster and its kubectl context. Also reports any other leftover kind clusters.
+- `make kind-nuke` — delete **every** kind cluster on the machine. Use this if `make kind-down` warns about leftovers (e.g. a default-named `kind` cluster from a previous `kind create cluster`).
+- `make cleanup-all` — namespace cleanup + `kind-down`, in order. This is the full teardown for the cluster `make kind-up` created.
+- `make cleanup` — friendly alias for `make cleanup-all`.
+
+All cleanup targets honor the `NAMESPACE` variable, which defaults to `drill-01`. If you ran a session in a different namespace, pass it explicitly:
+
+- `make cleanup-objects NAMESPACE=drill-02`
+- `make cleanup-namespace NAMESPACE=drill-02`
+- `make cleanup NAMESPACE=drill-02`
+
+Likewise, `make kind-cleanup` honors `KIND_CLUSTER_NAME`:
+
+- `make kind-cleanup KIND_CLUSTER_NAME=my-cluster`
 
 ### What happens during a session
 1. The tool loads drills from one of the CSV files:
