@@ -3,7 +3,6 @@ import sys
 
 from ckad_drills.config import (
     CKAD_EXAM_QUESTION_COUNT,
-    CKAD_EXAM_REMINDER_THRESHOLDS_SECONDS,
     CKAD_EXAM_TIME_LIMIT_SECONDS,
     CLEANUP_MODES,
     DEFAULT_CLEANUP_MODE,
@@ -26,7 +25,12 @@ from ckad_drills.session import (
     run_teardown_phase,
     validate_session_cleanup,
 )
-from ckad_drills.timer import SessionTimer, format_duration_short, parse_duration
+from ckad_drills.timer import (
+    SessionTimer,
+    default_reminder_thresholds,
+    format_duration_short,
+    parse_duration,
+)
 
 PASSING_PERCENTAGE = 66
 
@@ -228,15 +232,18 @@ def main(argv: list[str] | None = None) -> int:
     print()
 
     if time_limit_seconds is not None and drills:
+        reminder_thresholds = default_reminder_thresholds(time_limit_seconds)
         print(
             render_exam_timer_banner(
                 time_limit_seconds,
-                CKAD_EXAM_REMINDER_THRESHOLDS_SECONDS,
+                reminder_thresholds,
                 started=False,
                 use_color=use_color,
             )
         )
         print()
+    else:
+        reminder_thresholds = ()
 
     setup_summary = run_setup_phase(drills)
     setup_output = render_env_phase_summary(setup_summary, use_color=use_color)
@@ -253,13 +260,13 @@ def main(argv: list[str] | None = None) -> int:
     if time_limit_seconds is not None and drills:
         timer = SessionTimer(
             total_seconds=time_limit_seconds,
-            reminder_thresholds_seconds=CKAD_EXAM_REMINDER_THRESHOLDS_SECONDS,
+            reminder_thresholds_seconds=reminder_thresholds,
         )
         timer.start()
         print(
             render_exam_timer_banner(
                 time_limit_seconds,
-                CKAD_EXAM_REMINDER_THRESHOLDS_SECONDS,
+                reminder_thresholds,
                 started=True,
                 use_color=use_color,
             )

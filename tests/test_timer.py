@@ -18,6 +18,7 @@ SessionTimer = _timer.SessionTimer
 parse_duration = _timer.parse_duration
 format_duration_short = _timer.format_duration_short
 compute_reminder_schedule = _timer.compute_reminder_schedule
+default_reminder_thresholds = _timer.default_reminder_thresholds
 
 _cli = importlib.import_module("ckad_drills.cli")
 main = _cli.main
@@ -70,6 +71,54 @@ class TestFormatDurationShort(unittest.TestCase):
 
     def test_clamps_negative(self):
         self.assertEqual(format_duration_short(-10), "0s")
+
+
+class TestDefaultReminderThresholds(unittest.TestCase):
+    def test_two_hour_exam_uses_canonical_ckad_thresholds(self):
+        self.assertEqual(
+            default_reminder_thresholds(2 * 3600),
+            (60 * 60, 30 * 60, 10 * 60, 5 * 60),
+        )
+        # Also for longer time limits.
+        self.assertEqual(
+            default_reminder_thresholds(3 * 3600),
+            (60 * 60, 30 * 60, 10 * 60, 5 * 60),
+        )
+
+    def test_thirty_minute_exam_scales_down(self):
+        thresholds = default_reminder_thresholds(30 * 60)
+        # Must give multiple reminders inside the 30m window.
+        self.assertEqual(thresholds, (15 * 60, 10 * 60, 5 * 60, 60))
+        # And every threshold must be strictly less than the total time so
+        # they actually fire (compute_reminder_schedule drops >= total).
+        self.assertTrue(all(t < 30 * 60 for t in thresholds))
+
+    def test_ten_minute_exam_uses_sub_minute_thresholds(self):
+        thresholds = default_reminder_thresholds(10 * 60)
+        self.assertEqual(thresholds, (5 * 60, 2 * 60, 60, 30))
+
+    def test_short_exam_still_produces_reminders(self):
+        thresholds = default_reminder_thresholds(2 * 60)
+        self.assertEqual(thresholds, (60, 30, 15))
+        # ...and a ridiculously short session (1 minute) still gets at least one.
+        thresholds = default_reminder_thresholds(60)
+        self.assertTrue(len(thresholds) >= 1)
+        self.assertTrue(all(t < 60 for t in thresholds))
+
+    def test_degenerate_inputs(self):
+        self.assertEqual(default_reminder_thresholds(0), ())
+        self.assertEqual(default_reminder_thresholds(-5), ())
+        # Sessions shorter than 30s get no reminders (no useful threshold).
+        self.assertEqual(default_reminder_thresholds(10), ())
+
+    def test_thresholds_produce_a_real_schedule(self):
+        # Round-trip: every chosen threshold should survive the
+        # compute_reminder_schedule filter for its total.
+        for total in (60, 5 * 60, 30 * 60, 2 * 3600):
+            with self.subTest(total=total):
+                thresholds = default_reminder_thresholds(total)
+                schedule = compute_reminder_schedule(total, thresholds)
+                self.assertEqual(len(schedule), len(thresholds))
 
 
 class TestReminderSchedule(unittest.TestCase):

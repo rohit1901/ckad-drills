@@ -74,6 +74,30 @@ def format_duration_short(total_seconds: float) -> str:
     return f"{seconds}s"
 
 
+def default_reminder_thresholds(total_seconds: int) -> tuple[int, ...]:
+    """Pick sensible "X remaining" reminder thresholds for a given duration.
+
+    For the canonical 2h CKAD exam we keep the wall-clock thresholds users
+    expect (1h / 30m / 10m / 5m). For shorter time limits we scale down so a
+    student running ``--time-limit 30m`` (or anything in between) still gets
+    multiple reminders during the session instead of waiting an hour for the
+    first one and never seeing it.
+    """
+    if total_seconds <= 0:
+        return ()
+    if total_seconds >= 2 * 3600:  # >= 2h
+        return (60 * 60, 30 * 60, 10 * 60, 5 * 60)
+    if total_seconds >= 30 * 60:  # >= 30m
+        return (15 * 60, 10 * 60, 5 * 60, 60)
+    if total_seconds >= 10 * 60:  # >= 10m
+        return (5 * 60, 2 * 60, 60, 30)
+    if total_seconds >= 2 * 60:  # >= 2m
+        return (60, 30, 15)
+    if total_seconds >= 30:
+        return (total_seconds // 2, max(5, total_seconds // 4))
+    return ()
+
+
 def compute_reminder_schedule(
     total_seconds: int,
     reminder_thresholds_seconds: Iterable[int],
