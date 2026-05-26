@@ -5,6 +5,7 @@ from ckad_drills.models import (
     GradeResult,
     GradeSummary,
 )
+from ckad_drills.timer import format_duration_short
 
 RESET = "\033[0m"
 BOLD = "\033[1m"
@@ -82,6 +83,9 @@ def render_results(
     passing_percentage: int,
     show_solutions: bool = True,
     use_color: bool = False,
+    elapsed_seconds: float | None = None,
+    time_limit_seconds: int | None = None,
+    auto_graded: bool = False,
 ) -> str:
     lines = [
         colorize("=" * 72, CYAN, use_color=use_color),
@@ -119,6 +123,32 @@ def render_results(
     if summary.percentage < passing_percentage:
         result_line = "RESULT: 💻 KEEP PRACTICING!"
         result_style = RED
+
+    if elapsed_seconds is not None:
+        if time_limit_seconds is not None:
+            timing_line = (
+                f"TIME USED: {format_duration_short(elapsed_seconds)} / "
+                f"{format_duration_short(time_limit_seconds)}"
+            )
+        else:
+            timing_line = f"TIME USED: {format_duration_short(elapsed_seconds)}"
+        lines.extend(
+            [
+                "",
+                colorize("EXAM TIMING", BOLD, CYAN, use_color=use_color),
+                colorize("=" * 72, CYAN, use_color=use_color),
+                timing_line,
+            ]
+        )
+        if auto_graded:
+            lines.append(
+                colorize(
+                    "AUTO-GRADED: time limit reached before user confirmed.",
+                    BOLD,
+                    YELLOW,
+                    use_color=use_color,
+                )
+            )
 
     lines.extend(
         [

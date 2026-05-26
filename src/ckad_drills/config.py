@@ -3,6 +3,18 @@ from pathlib import Path
 DEFAULT_COUNT = 5
 DEFAULT_NAMESPACE = "drill-01"
 DEFAULT_CLEANUP_MODE = "none"
+
+# CKAD-style exam defaults (matches the official CKAD exam shape).
+# Override on the CLI with --count and --time-limit.
+CKAD_EXAM_QUESTION_COUNT = 22
+CKAD_EXAM_TIME_LIMIT_SECONDS = 120 * 60  # 2 hours
+# Reminders fire when the *remaining* time crosses one of these thresholds.
+CKAD_EXAM_REMINDER_THRESHOLDS_SECONDS = (
+    60 * 60,  # 1h remaining
+    30 * 60,  # 30m remaining
+    10 * 60,  # 10m remaining
+    5 * 60,  #  5m remaining
+)
 KNOWN_NAMESPACES = (
     "team-alpha",
     "team-beta",

@@ -2,6 +2,9 @@ import argparse
 import sys
 
 from ckad_drills.config import (
+    CKAD_EXAM_QUESTION_COUNT,
+    CKAD_EXAM_REMINDER_THRESHOLDS_SECONDS,
+    CKAD_EXAM_TIME_LIMIT_SECONDS,
     CLEANUP_MODES,
     DEFAULT_CLEANUP_MODE,
     DEFAULT_COUNT,
@@ -22,6 +25,7 @@ from ckad_drills.session import (
     run_teardown_phase,
     validate_session_cleanup,
 )
+from ckad_drills.timer import SessionTimer, format_duration_short, parse_duration
 
 PASSING_PERCENTAGE = 66
 
@@ -57,8 +61,11 @@ Examples:
     parser.add_argument(
         "--count",
         type=int,
-        default=DEFAULT_COUNT,
-        help="Number of questions to generate.",
+        default=None,
+        help=(
+            f"Number of questions. Default: {CKAD_EXAM_QUESTION_COUNT} in exam mode, "
+            f"{DEFAULT_COUNT} in drills mode."
+        ),
     )
     parser.add_argument(
         "--namespace",
@@ -70,6 +77,19 @@ Examples:
         type=int,
         default=None,
         help="Optional random seed for reproducible drill selection.",
+    )
+    parser.add_argument(
+        "--time-limit",
+        default=None,
+        help=(
+            "Exam time limit. Examples: '120m', '2h', '7200s'. Default: 120m in "
+            "exam mode; no limit in drills mode. Use --no-timer to disable."
+        ),
+    )
+    parser.add_argument(
+        "--no-timer",
+        action="store_true",
+        help="Disable the exam timer even in exam mode.",
     )
     parser.add_argument(
         "--cleanup",
@@ -99,14 +119,29 @@ Examples:
     return parser
 
 
-def wait_for_user_confirmation() -> None:
-    try:
-        input(
-            "Press ENTER when you have completed all drills to run the automated grader (or Ctrl+C to exit)..."
+def wait_for_user_confirmation(timer: SessionTimer | None = None) -> bool:
+    """Block until the user confirms or the exam timer expires.
+
+    Returns ``True`` if the timer fired (auto-grade mode) and ``False`` if the
+    user pressed Enter. Ctrl+C still exits the session as before.
+    """
+    prompt = (
+        "Press ENTER when you have completed all drills to run the automated "
+        "grader (or Ctrl+C to exit)..."
+    )
+    if timer is not None and timer.started:
+        prompt = (
+            f"Exam timer running ({format_duration_short(timer.total_seconds)} total). "
+            "Press ENTER to grade early, or wait for time to expire (Ctrl+C to exit)..."
         )
+    try:
+        input(prompt)
     except KeyboardInterrupt:
+        if timer is not None and timer.expired:
+            return True
         print("\nExiting without grading.")
         raise SystemExit(0) from None
+    return False
 
 
 def should_use_color() -> bool:
@@ -135,6 +170,34 @@ def run_cleanup_only(args: argparse.Namespace, *, use_color: bool) -> int:
     return 0 if cleanup_summary.succeeded else 1
 
 
+def _resolve_count(args: argparse.Namespace) -> int:
+    if args.count is not None:
+        return args.count
+    return CKAD_EXAM_QUESTION_COUNT if args.mode == "exam" else DEFAULT_COUNT
+
+
+def _resolve_time_limit_seconds(
+    args: argparse.Namespace,
+    parser: argparse.ArgumentParser,
+) -> int | None:
+    """Return the exam time limit in seconds, or None if disabled.
+
+    - ``--no-timer`` always wins (disables the timer).
+    - Exam mode defaults to ``CKAD_EXAM_TIME_LIMIT_SECONDS``.
+    - Drills mode is untimed unless ``--time-limit`` is explicitly passed.
+    """
+    if args.no_timer:
+        return None
+    if args.time_limit is not None:
+        try:
+            return parse_duration(args.time_limit)
+        except ValueError as exc:
+            parser.exit(status=1, message=f"Error: {exc}\n")
+    if args.mode == "exam":
+        return CKAD_EXAM_TIME_LIMIT_SECONDS
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -154,6 +217,8 @@ def main(argv: list[str] | None = None) -> int:
             args.namespace,
             kind_cluster_name=args.kind_cluster_name,
         )
+        args.count = _resolve_count(args)
+        time_limit_seconds = _resolve_time_limit_seconds(args, parser)
         drills = prepare_drills(args.mode, args.count, args.namespace, seed=args.seed)
     except (CleanupConfigurationError, DatasetValidationError) as exc:
         parser.exit(status=1, message=f"Error: {exc}\n")
@@ -172,7 +237,27 @@ def main(argv: list[str] | None = None) -> int:
                 "You can still attempt the drills, but verification may not behave as expected.\n"
             )
 
-    wait_for_user_confirmation()
+    timer: SessionTimer | None = None
+    if time_limit_seconds is not None and drills:
+        timer = SessionTimer(
+            total_seconds=time_limit_seconds,
+            reminder_thresholds_seconds=CKAD_EXAM_REMINDER_THRESHOLDS_SECONDS,
+        )
+        timer.start()
+        print(
+            f"Exam timer started: {format_duration_short(time_limit_seconds)} total. "
+            "Reminders will print at 1h / 30m / 10m / 5m remaining.\n"
+        )
+
+    auto_graded = False
+    elapsed_seconds: float | None = None
+    try:
+        auto_graded = wait_for_user_confirmation(timer)
+    finally:
+        if timer is not None:
+            elapsed_seconds = timer.elapsed_seconds()
+            timer.cancel()
+
     results, summary = evaluate_drills(drills)
     print()
     print(
@@ -182,6 +267,9 @@ def main(argv: list[str] | None = None) -> int:
             passing_percentage=PASSING_PERCENTAGE,
             show_solutions=args.show_solutions,
             use_color=use_color,
+            elapsed_seconds=elapsed_seconds,
+            time_limit_seconds=time_limit_seconds,
+            auto_graded=auto_graded,
         )
     )
 
