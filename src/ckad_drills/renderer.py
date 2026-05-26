@@ -76,6 +76,66 @@ def render_drills(
     return "\n".join(lines)
 
 
+def render_exam_timer_banner(
+    total_seconds: int,
+    reminder_thresholds_seconds: tuple[int, ...] = (),
+    *,
+    started: bool = False,
+    use_color: bool = False,
+) -> str:
+    """Render a prominent banner announcing the exam timer.
+
+    Used twice in a session: once up front (``started=False``) so the user
+    knows a time limit is in effect before they start solving, and once
+    immediately after setup completes (``started=True``) so the user sees
+    when the clock actually starts ticking.
+    """
+    title = "EXAM TIMER STARTED" if started else "EXAM TIMER ENABLED"
+    lines = [
+        colorize("=" * 72, CYAN, use_color=use_color),
+        colorize(title, BOLD, YELLOW, use_color=use_color),
+        colorize("=" * 72, CYAN, use_color=use_color),
+    ]
+    if started:
+        lines.append(
+            colorize(
+                f"⏱  Timer is running. Total: {format_duration_short(total_seconds)}.",
+                BOLD,
+                YELLOW,
+                use_color=use_color,
+            )
+        )
+    else:
+        lines.append(
+            colorize(
+                f"⏱  Time limit: {format_duration_short(total_seconds)} (countdown begins after setup).",
+                BOLD,
+                YELLOW,
+                use_color=use_color,
+            )
+        )
+    if reminder_thresholds_seconds:
+        thresholds_text = " / ".join(
+            format_duration_short(t) for t in reminder_thresholds_seconds
+        )
+        lines.append(
+            colorize(
+                f"   Reminders will print at {thresholds_text} remaining.",
+                YELLOW,
+                use_color=use_color,
+            )
+        )
+    lines.append(
+        colorize(
+            "   Press ENTER any time to grade early; Ctrl+C exits without grading.",
+            YELLOW,
+            use_color=use_color,
+        )
+    )
+    lines.append(colorize("=" * 72, CYAN, use_color=use_color))
+    return "\n".join(lines)
+
+
 def render_results(
     results: list[GradeResult],
     summary: GradeSummary,

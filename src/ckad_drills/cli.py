@@ -15,6 +15,7 @@ from ckad_drills.renderer import (
     render_cleanup_summary,
     render_drills,
     render_env_phase_summary,
+    render_exam_timer_banner,
     render_results,
 )
 from ckad_drills.session import (
@@ -226,6 +227,17 @@ def main(argv: list[str] | None = None) -> int:
     print(render_drills(drills, args.namespace, seed=args.seed, use_color=use_color))
     print()
 
+    if time_limit_seconds is not None and drills:
+        print(
+            render_exam_timer_banner(
+                time_limit_seconds,
+                CKAD_EXAM_REMINDER_THRESHOLDS_SECONDS,
+                started=False,
+                use_color=use_color,
+            )
+        )
+        print()
+
     setup_summary = run_setup_phase(drills)
     setup_output = render_env_phase_summary(setup_summary, use_color=use_color)
     if setup_output:
@@ -245,9 +257,14 @@ def main(argv: list[str] | None = None) -> int:
         )
         timer.start()
         print(
-            f"Exam timer started: {format_duration_short(time_limit_seconds)} total. "
-            "Reminders will print at 1h / 30m / 10m / 5m remaining.\n"
+            render_exam_timer_banner(
+                time_limit_seconds,
+                CKAD_EXAM_REMINDER_THRESHOLDS_SECONDS,
+                started=True,
+                use_color=use_color,
+            )
         )
+        print()
 
     auto_graded = False
     elapsed_seconds: float | None = None
