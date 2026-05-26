@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "CKAD practice drills generator and interactive grader"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = ["PyYAML>=6.0"]
 
 [project.scripts]
 ckad-drills = "ckad_drills.cli:main"

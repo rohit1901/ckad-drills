@@ -73,3 +73,15 @@ def resolve_question_bank_extension_paths() -> list[Path]:
     if not extension_dir.exists():
         return []
     return sorted(path for path in extension_dir.glob("*.csv") if path.is_file())
+
+
+def resolve_yaml_question_bank_paths() -> list[Path]:
+    """Return YAML question-bank files under ``question_banks/`` (``*.yaml`` and ``*.yml``)."""
+    extension_dir = PROJECT_ROOT / QUESTION_BANK_EXTENSION_DIR
+    if not extension_dir.exists():
+        return []
+    return sorted(
+        path
+        for path in extension_dir.iterdir()
+        if path.is_file() and path.suffix.lower() in (".yaml", ".yml")
+    )

@@ -8,11 +8,18 @@ from ckad_drills.config import (
     DEFAULT_NAMESPACE,
 )
 from ckad_drills.exceptions import CleanupConfigurationError, DatasetValidationError
-from ckad_drills.renderer import render_cleanup_summary, render_drills, render_results
+from ckad_drills.renderer import (
+    render_cleanup_summary,
+    render_drills,
+    render_env_phase_summary,
+    render_results,
+)
 from ckad_drills.session import (
     cleanup_session,
     evaluate_drills,
     prepare_drills,
+    run_setup_phase,
+    run_teardown_phase,
     validate_session_cleanup,
 )
 
@@ -153,6 +160,18 @@ def main(argv: list[str] | None = None) -> int:
 
     print(render_drills(drills, args.namespace, seed=args.seed, use_color=use_color))
     print()
+
+    setup_summary = run_setup_phase(drills)
+    setup_output = render_env_phase_summary(setup_summary, use_color=use_color)
+    if setup_output:
+        print(setup_output)
+        print()
+        if not setup_summary.succeeded:
+            print(
+                "Warning: one or more setup steps failed. "
+                "You can still attempt the drills, but verification may not behave as expected.\n"
+            )
+
     wait_for_user_confirmation()
     results, summary = evaluate_drills(drills)
     print()
@@ -165,6 +184,12 @@ def main(argv: list[str] | None = None) -> int:
             use_color=use_color,
         )
     )
+
+    teardown_summary = run_teardown_phase(drills)
+    teardown_output = render_env_phase_summary(teardown_summary, use_color=use_color)
+    if teardown_output:
+        print()
+        print(teardown_output)
 
     cleanup_summary = cleanup_session(
         args.cleanup,

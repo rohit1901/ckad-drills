@@ -1,4 +1,10 @@
-from ckad_drills.models import CleanupSummary, Drill, GradeResult, GradeSummary
+from ckad_drills.models import (
+    CleanupSummary,
+    Drill,
+    EnvPhaseSummary,
+    GradeResult,
+    GradeSummary,
+)
 
 RESET = "\033[0m"
 BOLD = "\033[1m"
@@ -144,9 +150,51 @@ def render_results(
                 f"[Drill {result.drill_number}] {result.question_id} | {result.domain} | {result.topic} | {status}",
                 f"Verify command: {result.verify_command}",
                 f"Hints: {result.hints}",
-                colorize("-" * 72, CYAN, use_color=use_color),
             ]
         )
+        if result.check_results:
+            lines.append(colorize("Checks:", BOLD, use_color=use_color))
+            for check in result.check_results:
+                check_status = colorize("PASS", GREEN, use_color=use_color)
+                if not check.passed:
+                    check_status = colorize("FAIL", RED, use_color=use_color)
+                lines.append(f"  - [{check_status}] {check.name}")
+                lines.append(f"      run:    {check.run}")
+                lines.append(f"      detail: {check.detail}")
+        lines.append(colorize("-" * 72, CYAN, use_color=use_color))
+
+    return "\n".join(lines)
+
+
+def render_env_phase_summary(
+    summary: EnvPhaseSummary,
+    *,
+    use_color: bool = False,
+) -> str:
+    if not summary.attempted:
+        return ""
+
+    heading = "SETUP" if summary.phase == "setup" else "TEARDOWN"
+    status_text = colorize("SUCCESS", GREEN, use_color=use_color)
+    if not summary.succeeded:
+        status_text = colorize("FAILED", RED, use_color=use_color)
+
+    lines = [
+        colorize("=" * 72, CYAN, use_color=use_color),
+        colorize(heading, BOLD, CYAN, use_color=use_color),
+        colorize("=" * 72, CYAN, use_color=use_color),
+        f"Status: {status_text}",
+        "",
+    ]
+    for step in summary.steps:
+        step_status = colorize("OK", GREEN, use_color=use_color)
+        if not step.succeeded:
+            step_status = colorize("FAILED", RED, use_color=use_color)
+        lines.append(f"- {step.label}: {step_status}")
+        lines.append(f"  Command: {step.command.splitlines()[0]}")
+        if step.output:
+            for output_line in step.output.splitlines():
+                lines.append(f"    {output_line}")
 
     return "\n".join(lines)
 

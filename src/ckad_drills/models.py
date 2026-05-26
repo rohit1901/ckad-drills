@@ -1,5 +1,38 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Mapping
+
+# Supported verify-check expectation kinds.
+CHECK_KIND_EQUALS = "equals"
+CHECK_KIND_CONTAINS = "contains"
+CHECK_KIND_NOT_CONTAINS = "not_contains"
+CHECK_KIND_REGEX = "regex"
+CHECK_KIND_EXIT_CODE = "exit_code"
+
+CHECK_KINDS = (
+    CHECK_KIND_EQUALS,
+    CHECK_KIND_CONTAINS,
+    CHECK_KIND_NOT_CONTAINS,
+    CHECK_KIND_REGEX,
+    CHECK_KIND_EXIT_CODE,
+)
+
+
+@dataclass(frozen=True)
+class VerifyCheck:
+    """A single declarative verification step for a YAML-based drill."""
+
+    name: str
+    run: str
+    kind: str  # one of CHECK_KINDS
+    value: str  # for exit_code, the integer encoded as string
+
+
+@dataclass(frozen=True)
+class EnvStep:
+    """A single setup or teardown step executed as a shell command."""
+
+    label: str
+    run: str
 
 
 @dataclass(frozen=True)
@@ -11,6 +44,9 @@ class Question:
     tasks: str
     verify: str
     hints: str
+    checks: tuple[VerifyCheck, ...] = field(default_factory=tuple)
+    setup_steps: tuple[EnvStep, ...] = field(default_factory=tuple)
+    teardown_steps: tuple[EnvStep, ...] = field(default_factory=tuple)
 
     @classmethod
     def from_row(cls, row: Mapping[str, str]) -> "Question":
@@ -34,6 +70,9 @@ class Drill:
     tasks: str
     verify: str
     hints: str
+    checks: tuple[VerifyCheck, ...] = field(default_factory=tuple)
+    setup_steps: tuple[EnvStep, ...] = field(default_factory=tuple)
+    teardown_steps: tuple[EnvStep, ...] = field(default_factory=tuple)
 
     @classmethod
     def from_question(
@@ -42,6 +81,9 @@ class Drill:
         *,
         tasks: str | None = None,
         verify: str | None = None,
+        checks: tuple[VerifyCheck, ...] | None = None,
+        setup_steps: tuple[EnvStep, ...] | None = None,
+        teardown_steps: tuple[EnvStep, ...] | None = None,
     ) -> "Drill":
         return cls(
             question_id=question.question_id,
@@ -51,7 +93,22 @@ class Drill:
             tasks=question.tasks if tasks is None else tasks,
             verify=question.verify if verify is None else verify,
             hints=question.hints,
+            checks=question.checks if checks is None else checks,
+            setup_steps=question.setup_steps if setup_steps is None else setup_steps,
+            teardown_steps=question.teardown_steps
+            if teardown_steps is None
+            else teardown_steps,
         )
+
+
+@dataclass(frozen=True)
+class CheckResult:
+    """Per-check outcome captured during structured grading."""
+
+    name: str
+    run: str
+    passed: bool
+    detail: str
 
 
 @dataclass(frozen=True)
@@ -63,6 +120,7 @@ class GradeResult:
     passed: bool
     verify_command: str
     hints: str
+    check_results: tuple[CheckResult, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)
@@ -106,3 +164,29 @@ class CleanupSummary:
     attempted: bool
     succeeded: bool
     steps: tuple[CleanupStepResult, ...]
+
+
+@dataclass(frozen=True)
+class EnvStepResult:
+    """Outcome of executing a single setup or teardown step."""
+
+    label: str
+    command: str
+    succeeded: bool
+    output: str
+
+
+@dataclass(frozen=True)
+class EnvPhaseSummary:
+    """Aggregate result for a setup or teardown phase."""
+
+    phase: str  # "setup" or "teardown"
+    steps: tuple[EnvStepResult, ...]
+
+    @property
+    def attempted(self) -> bool:
+        return len(self.steps) > 0
+
+    @property
+    def succeeded(self) -> bool:
+        return all(step.succeeded for step in self.steps)

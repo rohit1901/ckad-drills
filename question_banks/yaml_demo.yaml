@@ -1,0 +1,119 @@
+# Sample YAML question bank.
+#
+# Each entry under `questions:` is a single drill. Schema reference:
+#
+#   id, domain, topic        identifiers and CKAD scorecard alignment
+#   scenario                 narrative description shown to the user
+#   tasks                    multi-line string with the work the user must do
+#   hints                    free-text hints shown in the solution review
+#   setup     (optional)     shell-based steps run BEFORE drills are shown
+#   verify                   list of named checks, or a single shell pipeline
+#   teardown  (optional)     shell-based steps run AFTER grading
+#
+# Setup / teardown step shapes:
+#   - run: <shell command>
+#   - apply: |
+#       <inline kubernetes manifest yaml>
+#
+# Verify check shape:
+#   - name: human readable label
+#     run:  <shell command whose stdout / exit code is inspected>
+#     expect:
+#       equals:       <exact stdout match>
+#       contains:     <substring of stdout>
+#       not_contains: <substring that must be absent>
+#       regex:        <python regex matched against stdout>
+#       exit_code:    <integer; if absent, an exit_code of 0 is required>
+#   (use exactly one expectation per check)
+
+questions:
+  - id: YQ01
+    domain: Application Design and Build (20%)
+    topic: Define, build, and modify container images
+    scenario: |
+      You need a simple workload in namespace 'workloads' to validate basic
+      Pod creation and labeling.
+    tasks: |
+      1. Ensure namespace 'workloads' exists.
+      2. Create a Pod named 'demo-pod' in 'workloads' using image
+         'nginx:1.27-alpine'.
+      3. Add the label 'tier=frontend' on the Pod.
+      4. Confirm the Pod reaches the Running phase.
+    setup:
+      - name: ensure workloads namespace exists
+        run: kubectl create namespace workloads --dry-run=client -o yaml | kubectl apply -f -
+    verify:
+      - name: pod exists
+        run: kubectl get pod demo-pod -n workloads -o name
+        expect:
+          equals: pod/demo-pod
+      - name: pod is Running
+        run: kubectl get pod demo-pod -n workloads -o jsonpath='{.status.phase}'
+        expect:
+          equals: Running
+      - name: label tier=frontend is set
+        run: kubectl get pod demo-pod -n workloads -o jsonpath='{.metadata.labels.tier}'
+        expect:
+          equals: frontend
+      - name: image is nginx:1.27-alpine
+        run: kubectl get pod demo-pod -n workloads -o jsonpath='{.spec.containers[0].image}'
+        expect:
+          contains: nginx:1.27-alpine
+    teardown:
+      - name: delete demo-pod
+        run: kubectl delete pod demo-pod -n workloads --ignore-not-found
+    hints: |
+      kubectl run demo-pod --image=nginx:1.27-alpine -n workloads --labels=tier=frontend
+
+  - id: YQ02
+    domain: Application Deployment (20%)
+    topic: Use Kubernetes primitives to implement common deployment strategies
+    scenario: |
+      A Deployment 'web' has been pre-provisioned in namespace 'workloads' with
+      2 replicas. Your task is to scale it up and confirm a clean rollout.
+    tasks: |
+      1. Scale Deployment 'web' in namespace 'workloads' to 4 replicas.
+      2. Wait until the rollout completes (all 4 replicas Ready).
+    setup:
+      - name: ensure workloads namespace exists
+        run: kubectl create namespace workloads --dry-run=client -o yaml | kubectl apply -f -
+      - name: seed the 'web' Deployment
+        apply: |
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: web
+            namespace: workloads
+          spec:
+            replicas: 2
+            selector:
+              matchLabels:
+                app: web
+            template:
+              metadata:
+                labels:
+                  app: web
+              spec:
+                containers:
+                  - name: web
+                    image: nginx:1.27-alpine
+    verify:
+      - name: deployment.spec.replicas is 4
+        run: kubectl get deployment web -n workloads -o jsonpath='{.spec.replicas}'
+        expect:
+          equals: "4"
+      - name: deployment has 4 ready replicas
+        run: kubectl get deployment web -n workloads -o jsonpath='{.status.readyReplicas}'
+        expect:
+          equals: "4"
+      - name: no unavailable replicas
+        run: kubectl get deployment web -n workloads -o jsonpath='{.status.unavailableReplicas}'
+        expect:
+          # When all replicas are available, this field is empty.
+          not_contains: "1"
+    teardown:
+      - name: delete the 'web' Deployment
+        run: kubectl delete deployment web -n workloads --ignore-not-found
+    hints: |
+      kubectl scale deployment web -n workloads --replicas=4
+      kubectl rollout status deployment/web -n workloads

@@ -4,7 +4,7 @@ from collections.abc import Sequence
 
 from ckad_drills.config import KNOWN_NAMESPACES
 from ckad_drills.exceptions import DatasetValidationError
-from ckad_drills.models import Drill, Question
+from ckad_drills.models import Drill, EnvStep, Question, VerifyCheck
 
 
 def select_questions(
@@ -84,6 +84,32 @@ def build_drill(question: Question, target_namespace: str | None) -> Drill:
         question,
         tasks=rewrite_namespace(question.tasks, target_namespace),
         verify=rewrite_namespace(question.verify, target_namespace),
+        checks=tuple(
+            _rewrite_check(check, target_namespace) for check in question.checks
+        ),
+        setup_steps=tuple(
+            _rewrite_env_step(step, target_namespace) for step in question.setup_steps
+        ),
+        teardown_steps=tuple(
+            _rewrite_env_step(step, target_namespace)
+            for step in question.teardown_steps
+        ),
+    )
+
+
+def _rewrite_check(check: VerifyCheck, target_namespace: str | None) -> VerifyCheck:
+    return VerifyCheck(
+        name=check.name,
+        run=rewrite_namespace(check.run, target_namespace),
+        kind=check.kind,
+        value=check.value,
+    )
+
+
+def _rewrite_env_step(step: EnvStep, target_namespace: str | None) -> EnvStep:
+    return EnvStep(
+        label=step.label,
+        run=rewrite_namespace(step.run, target_namespace),
     )
 
 

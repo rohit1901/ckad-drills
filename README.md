@@ -180,16 +180,18 @@ The project now uses two concepts:
 In exam mode, the CLI validates that every `id` in `ckad_balanced_exam.csv` exists in `ckad_full_question_bank.csv`, then builds a balanced exam dynamically from the full bank.
 
 ### Extend the question bank
-If you want to add more questions in the future, place additional CSV files in:
+If you want to add more questions, place additional files in:
 
 - `question_banks/`
 
-Rules:
-- use the same CSV schema as the base question bank
-- every question must have a unique `id`
-- do not reuse an `id` from the base bank or another extension file
+Two formats are supported and loaded together:
 
-These extension files are loaded automatically in both drill mode and exam mode.
+- **YAML (recommended for new content)** — `question_banks/*.yaml` or `*.yml`. Supports declarative per-check verification (`equals` / `contains` / `not_contains` / `regex` / `exit_code`) plus optional `setup` and `teardown` phases that run before and after the drill. See `question_banks/yaml_demo.yaml` for a complete example, and `question_banks/README.md` for the full schema reference.
+- **CSV (legacy)** — `question_banks/*.csv`. Must match the existing `ckad_full_question_bank.csv` schema (`id,domain,topic,scenario,tasks,verify,hints`) where `verify` is a single shell pipeline whose exit code decides pass/fail.
+
+Rules:
+- every question must have a unique `id` across all CSV + YAML files (including the base bank)
+- YAML drills get picked up in both `drills` mode and `exam` mode; in exam mode they're eligible whenever their `domain` / `topic` aligns with a blueprint slot
 
 ### Guide: maintain the question bank and exam blueprint
 Use this workflow when you want to add new questions or evolve the exam over time.

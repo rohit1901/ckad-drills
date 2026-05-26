@@ -47,6 +47,10 @@ CleanupStepResult = _models.CleanupStepResult
 CleanupSummary = _models.CleanupSummary
 Drill = _models.Drill
 GradeSummary = _models.GradeSummary
+VerifyCheck = _models.VerifyCheck
+EnvStep = _models.EnvStep
+_yaml_datasets = importlib.import_module("ckad_drills.yaml_datasets")
+load_yaml_questions = _yaml_datasets.load_yaml_questions
 
 FIXTURE_PATH = TESTS_ROOT / "fixtures" / "sample_questions.csv"
 EXTRA_BANK_FIXTURE = TESTS_ROOT / "fixtures" / "sample_questions_extra.csv"
@@ -58,6 +62,7 @@ INVALID_SCHEMA_FIXTURE = (
     TESTS_ROOT / "fixtures" / "invalid_questions_missing_verify.csv"
 )
 INVALID_ROW_FIXTURE = TESTS_ROOT / "fixtures" / "invalid_questions_empty_verify.csv"
+YAML_BANK_FIXTURE = TESTS_ROOT / "fixtures" / "sample_yaml_bank.yaml"
 
 
 class TestDatasets(unittest.TestCase):
@@ -221,6 +226,11 @@ class TestSession(unittest.TestCase):
                 _session,
                 "resolve_question_bank_extension_paths",
                 return_value=[EXTRA_BANK_FIXTURE],
+            ),
+            patch.object(
+                _session,
+                "resolve_yaml_question_bank_paths",
+                return_value=[],
             ),
         ):
             questions = load_configured_question_bank()
@@ -560,6 +570,136 @@ class TestCli(unittest.TestCase):
             "cleanup-only requires a cleanup mode other than 'none'",
             stderr_buffer.getvalue(),
         )
+
+
+class TestYAMLBank(unittest.TestCase):
+    def test_load_yaml_questions_parses_structured_checks(self):
+        questions = load_yaml_questions(YAML_BANK_FIXTURE)
+
+        self.assertEqual(len(questions), 2)
+        first = questions[0]
+        self.assertEqual(first.question_id, "YQ-FIX-01")
+        self.assertEqual(len(first.checks), 4)
+        self.assertEqual(first.checks[0].kind, "equals")
+        self.assertEqual(first.checks[0].value, "hello")
+        self.assertEqual(first.checks[1].kind, "contains")
+        self.assertEqual(first.checks[2].kind, "regex")
+        # No expect block -> default exit_code 0.
+        self.assertEqual(first.checks[3].kind, "exit_code")
+        self.assertEqual(first.checks[3].value, "0")
+        self.assertEqual(len(first.setup_steps), 1)
+        self.assertEqual(len(first.teardown_steps), 1)
+
+    def test_load_yaml_questions_supports_string_verify_fallback(self):
+        questions = load_yaml_questions(YAML_BANK_FIXTURE)
+        second = questions[1]
+
+        self.assertEqual(second.question_id, "YQ-FIX-02")
+        self.assertEqual(second.checks, ())
+        self.assertEqual(second.verify, "true")
+
+
+class TestStructuredGrading(unittest.TestCase):
+    def _build_drill(self, checks):
+        return Drill(
+            question_id="Y01",
+            domain="Domain X",
+            topic="Topic X",
+            scenario="...",
+            tasks="...",
+            verify="fallback",
+            hints="",
+            checks=tuple(checks),
+        )
+
+    def test_drill_passes_when_all_checks_pass(self):
+        captures = {
+            "echo hello": (0, "hello\n", ""),
+            "echo world": (0, "world\n", ""),
+        }
+        drill = self._build_drill(
+            [
+                VerifyCheck(name="a", run="echo hello", kind="equals", value="hello"),
+                VerifyCheck(name="b", run="echo world", kind="contains", value="orl"),
+            ]
+        )
+
+        results = grade_drills(
+            [drill],
+            runner=lambda _command: False,  # would fail; should be ignored
+            capture_runner=lambda command: captures[command],
+        )
+
+        self.assertTrue(results[0].passed)
+        self.assertEqual(len(results[0].check_results), 2)
+        self.assertTrue(all(cr.passed for cr in results[0].check_results))
+
+    def test_drill_fails_when_any_check_fails(self):
+        captures = {
+            "echo hello": (0, "hello\n", ""),
+            "echo nope": (0, "nope\n", ""),
+        }
+        drill = self._build_drill(
+            [
+                VerifyCheck(name="a", run="echo hello", kind="equals", value="hello"),
+                VerifyCheck(name="b", run="echo nope", kind="equals", value="yep"),
+            ]
+        )
+
+        results = grade_drills(
+            [drill],
+            runner=lambda _command: True,
+            capture_runner=lambda command: captures[command],
+        )
+
+        self.assertFalse(results[0].passed)
+        self.assertTrue(results[0].check_results[0].passed)
+        self.assertFalse(results[0].check_results[1].passed)
+        self.assertIn("yep", results[0].check_results[1].detail)
+
+    def test_non_zero_exit_fails_non_exit_code_checks(self):
+        captures = {
+            "kubectl get pod missing": (1, "", "Error from server (NotFound)"),
+        }
+        drill = self._build_drill(
+            [
+                VerifyCheck(
+                    name="pod exists",
+                    run="kubectl get pod missing",
+                    kind="contains",
+                    value="missing",
+                ),
+            ]
+        )
+
+        results = grade_drills(
+            [drill],
+            runner=lambda _command: True,
+            capture_runner=lambda command: captures[command],
+        )
+
+        self.assertFalse(results[0].passed)
+        self.assertIn("exit_code=1", results[0].check_results[0].detail)
+
+    def test_fallback_to_bool_runner_when_no_checks(self):
+        drill = Drill(
+            question_id="Q01",
+            domain="Domain X",
+            topic="Topic X",
+            scenario="...",
+            tasks="...",
+            verify="some-command",
+            hints="",
+        )
+
+        results = grade_drills(
+            [drill],
+            runner=lambda command: command == "some-command",
+            capture_runner=lambda command: (99, "", ""),  # would fail if used
+        )
+
+        self.assertTrue(results[0].passed)
+        self.assertEqual(results[0].check_results, ())
 
 
 if __name__ == "__main__":
