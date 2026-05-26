@@ -335,23 +335,75 @@ class TestCliTimerWiring(unittest.TestCase):
         self.assertEqual(args.time_limit, "90m")
         self.assertTrue(args.no_timer)
 
-    def test_wait_for_user_confirmation_returns_true_on_timer_expiry(self):
+    def test_wait_for_user_confirmation_returns_true_when_timer_already_expired(self):
+        # Polling loop sees timer.expired=True on its first iteration and
+        # returns True without ever consulting stdin.
         class _FakeTimer:
             started = True
             expired = True
             total_seconds = 60
 
-        with patch("builtins.input", side_effect=KeyboardInterrupt):
-            result = wait_for_user_confirmation(_FakeTimer())
-        self.assertTrue(result)
+        with patch("sys.stdout.write"), patch("sys.stdout.flush"):
+            self.assertTrue(wait_for_user_confirmation(_FakeTimer()))
 
-    def test_wait_for_user_confirmation_exits_on_user_ctrl_c(self):
+    def test_wait_for_user_confirmation_returns_true_when_timer_expires_during_poll(
+        self,
+    ):
+        # Simulate timer expiring on the second poll iteration. select.select
+        # returns no ready fds (timeout), then the loop checks timer.expired
+        # again and returns True.
+        class _FakeTimer:
+            started = True
+            total_seconds = 60
+            _polls = 0
+
+            @property
+            def expired(self):
+                self.__class__._polls += 1
+                return self.__class__._polls >= 2
+
+        _FakeTimer._polls = 0
+        with (
+            patch("sys.stdout.write"),
+            patch("sys.stdout.flush"),
+            patch("ckad_drills.cli.select.select", return_value=([], [], [])),
+        ):
+            self.assertTrue(wait_for_user_confirmation(_FakeTimer()))
+
+    def test_wait_for_user_confirmation_returns_false_when_user_presses_enter(self):
         class _FakeTimer:
             started = True
             expired = False
             total_seconds = 60
 
-        with patch("builtins.input", side_effect=KeyboardInterrupt):
+        fake_stdin = io.StringIO("\n")
+        with (
+            patch("sys.stdout.write"),
+            patch("sys.stdout.flush"),
+            patch("sys.stdin", fake_stdin),
+            patch(
+                "ckad_drills.cli.select.select",
+                return_value=([fake_stdin], [], []),
+            ),
+        ):
+            self.assertFalse(wait_for_user_confirmation(_FakeTimer()))
+
+    def test_wait_for_user_confirmation_exits_on_user_ctrl_c(self):
+        # Ctrl+C during the polling loop while the timer hasn't expired
+        # should exit cleanly with status 0 (unchanged contract).
+        class _FakeTimer:
+            started = True
+            expired = False
+            total_seconds = 60
+
+        with (
+            patch("sys.stdout.write"),
+            patch("sys.stdout.flush"),
+            patch(
+                "ckad_drills.cli.select.select",
+                side_effect=KeyboardInterrupt,
+            ),
+        ):
             with self.assertRaises(SystemExit) as ctx:
                 wait_for_user_confirmation(_FakeTimer())
         self.assertEqual(ctx.exception.code, 0)

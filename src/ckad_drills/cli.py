@@ -1,4 +1,5 @@
 import argparse
+import select
 import sys
 
 from ckad_drills.config import (
@@ -129,6 +130,11 @@ def wait_for_user_confirmation(timer: SessionTimer | None = None) -> bool:
 
     Returns ``True`` if the timer fired (auto-grade mode) and ``False`` if the
     user pressed Enter. Ctrl+C still exits the session as before.
+
+    When a timer is supplied we *poll* stdin via ``select.select`` instead of
+    using ``input()`` so we can detect timer expiry reliably without relying
+    on SIGINT being delivered to a thread sitting inside a blocking libc
+    read (which is racy on macOS in particular).
     """
     prompt = (
         "Press ENTER when you have completed all drills to run the automated "
@@ -139,14 +145,64 @@ def wait_for_user_confirmation(timer: SessionTimer | None = None) -> bool:
             f"Exam timer running ({format_duration_short(timer.total_seconds)} total). "
             "Press ENTER to grade early, or wait for time to expire (Ctrl+C to exit)..."
         )
+
+    if timer is None:
+        try:
+            input(prompt)
+        except KeyboardInterrupt:
+            print("\nExiting without grading.")
+            raise SystemExit(0) from None
+        return False
+
+    return _wait_with_timer_polling(timer, prompt)
+
+
+def _wait_with_timer_polling(
+    timer: SessionTimer, prompt: str, poll_interval_seconds: float = 0.5
+) -> bool:
+    """Display ``prompt`` and wait for either ENTER or timer expiry.
+
+    Uses ``select.select`` on stdin so the main thread can observe
+    ``timer.expired`` becoming True within ``poll_interval_seconds`` without
+    being trapped inside ``input()``.
+    """
+    sys.stdout.write(prompt)
+    sys.stdout.flush()
+    stdin_fd = sys.stdin
     try:
-        input(prompt)
+        while True:
+            if timer.expired:
+                sys.stdout.write("\n")
+                sys.stdout.flush()
+                return True
+            try:
+                ready, _, _ = select.select([stdin_fd], [], [], poll_interval_seconds)
+            except (OSError, ValueError):
+                # stdin isn't selectable (e.g. closed, or this is being run
+                # under a stub that returns a non-fd stream). Fall back to a
+                # plain blocking read which at least lets the user grade by
+                # pressing ENTER; the timer-expiry path will still raise
+                # SIGINT via on_expire as a backstop.
+                try:
+                    stdin_fd.readline()
+                except KeyboardInterrupt:
+                    if timer.expired:
+                        return True
+                    print("\nExiting without grading.")
+                    raise SystemExit(0) from None
+                return timer.expired
+            if ready:
+                line = stdin_fd.readline()
+                if line == "":
+                    # EOF on stdin (Ctrl+D or closed pipe). Treat as "grade now"
+                    # so the session doesn't hang forever.
+                    return timer.expired
+                return False
     except KeyboardInterrupt:
-        if timer is not None and timer.expired:
+        if timer.expired:
             return True
         print("\nExiting without grading.")
         raise SystemExit(0) from None
-    return False
 
 
 def should_use_color() -> bool:
