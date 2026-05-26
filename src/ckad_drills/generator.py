@@ -71,8 +71,13 @@ def rewrite_namespace(text: str, target_namespace: str | None) -> str:
 
     updated_text = text
     for namespace in KNOWN_NAMESPACES:
+        # Match the namespace as a standalone token, but NOT when it's a path
+        # component (e.g. ``/dev/null``, ``/etc/staging/...``). Without the
+        # negative lookbehind, ``\b`` happily fires on the slash boundary and
+        # rewrites ``/dev/null`` into ``/<target>/null``, which silently breaks
+        # shell redirections in setup / verify commands.
         updated_text = re.sub(
-            rf"\b{re.escape(namespace)}\b",
+            rf"(?<![/\w]){re.escape(namespace)}\b",
             target_namespace,
             updated_text,
         )

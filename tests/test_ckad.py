@@ -168,6 +168,20 @@ class TestGenerator(unittest.TestCase):
             "kubectl get pod -n drill-01 && nslookup db-service.drill-01.svc.cluster.local",
         )
 
+    def test_rewrite_namespace_preserves_filesystem_paths(self):
+        # Without the path-aware lookbehind these would become '/drill-01/null',
+        # '/etc/drill-01/foo', etc. and silently break shell redirections in
+        # drill setup / verify commands.
+        for text in (
+            "command -v helm >/dev/null",
+            "kubectl auth can-i delete pods 2>/dev/null; true",
+            "/etc/staging/foo",
+            "/var/log/prod/app.log",
+            "developer",  # 'dev' inside a larger word
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(rewrite_namespace(text, "drill-01"), text)
+
     def test_build_drills_returns_drill_models(self):
         questions = load_questions(FIXTURE_PATH)
 
