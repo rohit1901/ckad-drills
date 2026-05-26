@@ -1,0 +1,371 @@
+# Application Design and Build drills.
+#
+# Exercises the YAML bank format across a range of expectation kinds:
+# - equals      : exact stdout match
+# - contains    : substring match
+# - not_contains: substring must be absent
+# - regex       : python regex match
+# - exit_code   : explicit exit-code expectation
+#
+# All drills target well-known namespaces which the runtime rewrites to
+# whatever you pass via --namespace.
+
+questions:
+  - id: Q01
+    domain: Application Design and Build (20%)
+    topic: Define, build, and modify container images
+    scenario: |
+      You need to deploy a custom application 'gateway' in namespace 'workloads' using a container image 'python:3.11-slim' that requires a specific command override.
+    tasks: |
+      1. Create a Pod 'gateway-custom' in namespace 'workloads' using image 'python:3.11-slim'
+      2. Override the default command to run 'sleep 3600'
+      3. Set the working directory to '/tmp'
+      4. Add two environment variables: APP_NAME=gateway and NAMESPACE=workloads
+      5. Verify the container is running with the overridden command
+    setup:
+      - name: ensure workloads namespace exists
+        run: kubectl create namespace workloads --dry-run=client -o yaml | kubectl apply -f -
+    verify:
+      - name: pod gateway-custom exists
+        run: kubectl get pod gateway-custom -n workloads -o name
+        expect:
+          equals: pod/gateway-custom
+      - name: pod gateway-custom is Running
+        run: kubectl get pod gateway-custom -n workloads -o jsonpath='{.status.phase}'
+        expect:
+          equals: Running
+      - name: container command overridden to sleep
+        run: kubectl get pod gateway-custom -n workloads -o jsonpath='{.spec.containers[0].command}'
+        expect:
+          contains: sleep
+      - name: APP_NAME env var is set
+        run: kubectl get pod gateway-custom -n workloads -o jsonpath="{.spec.containers[0].env[?(@.name=='APP_NAME')].value}"
+        expect:
+          equals: gateway
+    teardown:
+      - run: kubectl delete pod gateway-custom -n workloads --ignore-not-found --wait=false
+    hints: |
+      Use 'command' and 'args' in the container spec. WorkingDir sets the working directory.
+
+  - id: Q02
+    domain: Application Design and Build (20%)
+    topic: Define, build, and modify container images
+    scenario: |
+      Deploy 'scheduler' in 'team-alpha' with a container that needs to pull a private image 'alpine:3.18' using imagePullSecrets.
+    tasks: |
+      1. Create a Secret of type 'kubernetes.io/dockerconfigjson' named 'registry-creds' in 'team-alpha'
+         (you can use `kubectl create secret docker-registry registry-creds --docker-server=... --docker-username=... --docker-password=... --docker-email=...`)
+      2. Create a Pod 'scheduler-private' using image 'alpine:3.18'
+      3. Configure imagePullSecrets to reference 'registry-creds'
+      4. Verify the Pod has the imagePullSecret set and can pull the image
+    setup:
+      - name: ensure team-alpha namespace exists
+        run: kubectl create namespace team-alpha --dry-run=client -o yaml | kubectl apply -f -
+    verify:
+      - name: Secret registry-creds is a dockerconfigjson Secret
+        run: kubectl get secret registry-creds -n team-alpha -o jsonpath='{.type}'
+        expect:
+          equals: kubernetes.io/dockerconfigjson
+      - name: pod references registry-creds in imagePullSecrets
+        run: kubectl get pod scheduler-private -n team-alpha -o jsonpath='{.spec.imagePullSecrets[*].name}'
+        expect:
+          contains: registry-creds
+    teardown:
+      - run: kubectl delete pod scheduler-private -n team-alpha --ignore-not-found --wait=false
+      - run: kubectl delete secret registry-creds -n team-alpha --ignore-not-found
+    hints: |
+      `kubectl create secret docker-registry` builds the dockerconfigjson Secret for you. Reference it under `spec.imagePullSecrets` on the Pod.
+
+  - id: Q03
+    domain: Application Design and Build (20%)
+    topic: Choose and use the right workload resource (Deployment, DaemonSet, CronJob, etc.)
+    scenario: |
+      You need to run a background job that processes logs every 5 minutes in namespace 'default'.
+    tasks: |
+      1. Create a CronJob 'backend-cron' in namespace 'default'
+      2. Schedule: '*/5 * * * *'
+      3. Job template: use image 'busybox:1.36', command: ['sh', '-c', 'echo Processing logs at $(date)']
+      4. Set successfulJobsHistoryLimit to 3 and failedJobsHistoryLimit to 1
+      5. Manually trigger one job and verify it completes
+    setup:
+      - name: ensure default namespace exists
+        run: kubectl create namespace default --dry-run=client -o yaml | kubectl apply -f -
+    verify:
+      - name: CronJob backend-cron exists
+        run: kubectl get cronjob backend-cron -n default -o name
+        expect:
+          contains: cronjob.batch/backend-cron
+      - name: CronJob schedule is correct
+        run: kubectl get cronjob backend-cron -n default -o jsonpath='{.spec.schedule}'
+        expect:
+          equals: "*/5 * * * *"
+      - name: successfulJobsHistoryLimit is 3
+        run: kubectl get cronjob backend-cron -n default -o jsonpath='{.spec.successfulJobsHistoryLimit}'
+        expect:
+          equals: "3"
+    teardown:
+      - run: kubectl delete cronjob backend-cron -n default --ignore-not-found
+    hints: |
+      CronJob spec includes schedule, jobTemplate, and history limits. Use 'kubectl create job --from=cronjob/...' to trigger.
+
+  - id: Q04
+    domain: Application Design and Build (20%)
+    topic: Choose and use the right workload resource (Deployment, DaemonSet, CronJob, etc.)
+    scenario: |
+      You need to run a monitoring agent on every node in the cluster that collects node-level metrics.
+    tasks: |
+      1. Create a DaemonSet 'cache-agent' in namespace 'dev'
+      2. Use image 'busybox:1.36'
+      3. Mount the host's /proc directory at /host/proc in read-only mode
+      4. Mount the host's /sys directory at /host/sys in read-only mode
+      5. Ensure the agent tolerates the node-role.kubernetes.io/control-plane taint
+      6. Verify a Pod runs on every node
+    setup:
+      - name: ensure dev namespace exists
+        run: kubectl create namespace dev --dry-run=client -o yaml | kubectl apply -f -
+    verify:
+      - name: DaemonSet cache-agent exists
+        run: kubectl get daemonset cache-agent -n dev -o name
+        expect:
+          contains: daemonset.apps/cache-agent
+      - name: all DaemonSet pods are Ready
+        run: kubectl get daemonset cache-agent -n dev -o jsonpath='{.status.numberReady}'
+        expect:
+          regex: '^[1-9]\d*$'
+      - name: DaemonSet desired == ready
+        run: kubectl get daemonset cache-agent -n dev -o jsonpath='{.status.desiredNumberScheduled}-{.status.numberReady}'
+        expect:
+          regex: '^([1-9]\d*)-\1$'
+    teardown:
+      - run: kubectl delete daemonset cache-agent -n dev --ignore-not-found
+    hints: |
+      DaemonSet ensures one Pod per node. Use hostPath volumes. Add tolerations for control-plane nodes.
+
+  - id: Q05
+    domain: Application Design and Build (20%)
+    topic: Choose and use the right workload resource (Deployment, DaemonSet, CronJob, etc.)
+    scenario: |
+      You need to run a one-time database migration job before starting the main application.
+    tasks: |
+      1. Create a Job 'proxy-migration' in namespace 'ckad-practice'
+      2. Use image 'busybox:1.36' with command ['sh', '-c', 'echo DB migration completed']
+      3. Set completions: 1, parallelism: 1, backoffLimit: 3
+      4. Ensure the Job has a ttlSecondsAfterFinished of 60
+      5. Wait for completion and verify the Job succeeded
+    setup:
+      - name: ensure ckad-practice namespace exists
+        run: kubectl create namespace ckad-practice --dry-run=client -o yaml | kubectl apply -f -
+    verify:
+      - name: Job proxy-migration succeeded
+        run: kubectl get job proxy-migration -n ckad-practice -o jsonpath='{.status.succeeded}'
+        expect:
+          equals: "1"
+      - name: Job completion log line is present
+        run: kubectl logs job/proxy-migration -n ckad-practice
+        expect:
+          contains: DB migration completed
+    teardown:
+      - run: kubectl delete job proxy-migration -n ckad-practice --ignore-not-found
+    hints: |
+      Job spec includes completions, parallelism, and backoffLimit. ttlSecondsAfterFinished auto-cleans completed Jobs.
+
+  - id: Q06
+    domain: Application Design and Build (20%)
+    topic: Understand multi-container Pod design patterns (sidecar, init, and others)
+    scenario: |
+      Create a Pod with an adapter pattern: a main app writes logs to a file, and a sidecar streams them to stdout.
+    tasks: |
+      1. Create Pod 'notifier-adapter' in namespace 'workloads' with two containers named 'notifier-app' and 'notifier-sidecar'
+      2. 'notifier-app': image 'busybox:1.36', writes a log line to /var/log/app.log every 5 seconds
+      3. 'notifier-sidecar': image 'busybox:1.36', runs 'tail -F /var/log/app.log'
+      4. Share a volume 'log-vol' (emptyDir) mounted at /var/log in both containers
+      5. Verify the sidecar's stdout shows the log entries the main app writes
+    setup:
+      - name: ensure workloads namespace exists
+        run: kubectl create namespace workloads --dry-run=client -o yaml | kubectl apply -f -
+    verify:
+      - name: pod has two containers
+        run: kubectl get pod notifier-adapter -n workloads -o jsonpath='{.spec.containers[*].name}'
+        expect:
+          contains: notifier-sidecar
+      - name: sidecar logs are accessible
+        run: kubectl logs notifier-adapter -n workloads -c notifier-sidecar --tail=5
+        expect:
+          exit_code: 0
+    teardown:
+      - run: kubectl delete pod notifier-adapter -n workloads --ignore-not-found --wait=false
+    hints: |
+      Adapter pattern transforms output. Both containers mount the same emptyDir volume.
+
+  - id: Q07
+    domain: Application Design and Build (20%)
+    topic: Understand multi-container Pod design patterns (sidecar, init, and others)
+    scenario: |
+      Deploy 'api' with an init container that waits for a database service to be ready before the main app starts.
+    tasks: |
+      1. Create Pod 'api-init' in namespace 'default'
+      2. Init container 'wait-for-db': image 'busybox:1.36', command retries connecting to 'db-service.default.svc.cluster.local:3306' for up to 60 seconds
+      3. Main container 'api': image 'httpd:alpine', port 3000
+      4. The included setup creates a stub 'db-service' so the init container can complete; verify the Pod transitions from Init:0/1 to Running
+    setup:
+      - name: ensure default namespace exists
+        run: kubectl create namespace default --dry-run=client -o yaml | kubectl apply -f -
+      - name: ensure db-service stub exists so the init container can resolve it
+        apply: |
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: db-service
+            namespace: default
+          spec:
+            ports:
+              - port: 3306
+                targetPort: 3306
+            # No selector / endpoints; DNS still resolves and init container's
+            # connect retry can be satisfied with a manual endpoints object if
+            # needed. Students may also create a real backend during the drill.
+    verify:
+      - name: pod api-init exists
+        run: kubectl get pod api-init -n default -o name
+        expect:
+          equals: pod/api-init
+      - name: pod has an init container named wait-for-db
+        run: kubectl get pod api-init -n default -o jsonpath='{.spec.initContainers[*].name}'
+        expect:
+          contains: wait-for-db
+      - name: main container uses httpd:alpine
+        run: kubectl get pod api-init -n default -o jsonpath='{.spec.containers[?(@.name=="api")].image}'
+        expect:
+          contains: httpd
+    teardown:
+      - run: kubectl delete pod api-init -n default --ignore-not-found --wait=false
+      - run: kubectl delete service db-service -n default --ignore-not-found
+    hints: |
+      Init containers run sequentially before app containers. Use 'for i in $(seq 1 60); do nc -z db-service 3306 && exit 0; sleep 1; done' for retry logic.
+
+  - id: Q08
+    domain: Application Design and Build (20%)
+    topic: Understand multi-container Pod design patterns (sidecar, init, and others)
+    scenario: |
+      Create an ambassador pattern Pod where a local proxy container forwards requests to an external service.
+    tasks: |
+      1. Create Pod 'cache-ambassador' in namespace 'default' with two containers: 'cache-app' and 'cache-proxy'
+      2. 'cache-proxy' (ambassador): image 'nginx:alpine', listens on port 8080
+      3. Configure nginx (via a ConfigMap-mounted nginx.conf) to proxy_pass to an upstream
+      4. 'cache-app': image 'busybox:1.36', runs 'wget -qO- http://localhost:8080' in a loop
+      5. Verify cache-app's logs show successful responses from the ambassador
+    setup:
+      - name: ensure default namespace exists
+        run: kubectl create namespace default --dry-run=client -o yaml | kubectl apply -f -
+    verify:
+      - name: pod cache-ambassador exists
+        run: kubectl get pod cache-ambassador -n default -o name
+        expect:
+          equals: pod/cache-ambassador
+      - name: cache-app logs are accessible
+        run: kubectl logs cache-ambassador -n default -c cache-app --tail=5
+        expect:
+          exit_code: 0
+    teardown:
+      - run: kubectl delete pod cache-ambassador -n default --ignore-not-found --wait=false
+    hints: |
+      Ambassador pattern proxies external connections. The main app talks to localhost, ambassador forwards outward.
+
+  - id: Q09
+    domain: Application Design and Build (20%)
+    topic: Utilize persistent and ephemeral volumes
+    scenario: |
+      Deploy a stateful application 'processor' that requires persistent storage for its data directory.
+    tasks: |
+      1. Create a PVC 'processor-pvc' in namespace 'team-alpha' requesting 1Gi storage (any default StorageClass is fine; e.g. 'standard' or 'local-path' on kind)
+      2. Create a Deployment 'processor-db' with 1 replica using image 'redis:7-alpine'
+      3. Mount the PVC at /data in the container
+      4. Write a test key to Redis
+      5. Delete the Pod and verify the data persists when the new Pod starts
+    setup:
+      - name: ensure team-alpha namespace exists
+        run: kubectl create namespace team-alpha --dry-run=client -o yaml | kubectl apply -f -
+    verify:
+      - name: Deployment processor-db exists
+        run: kubectl get deployment processor-db -n team-alpha -o name
+        expect:
+          contains: deployment.apps/processor-db
+      - name: Deployment has 1 ready replica
+        run: kubectl get deployment processor-db -n team-alpha -o jsonpath='{.status.readyReplicas}'
+        expect:
+          equals: "1"
+      - name: PVC processor-pvc is Bound
+        run: kubectl get pvc processor-pvc -n team-alpha -o jsonpath='{.status.phase}'
+        expect:
+          equals: Bound
+    teardown:
+      - run: kubectl delete deployment processor-db -n team-alpha --ignore-not-found
+      - run: kubectl delete pvc processor-pvc -n team-alpha --ignore-not-found
+    hints: |
+      Use volumeClaimTemplates for StatefulSets, but for Deployment use a pre-created PVC. StatefulSet is preferred for stateful apps.
+
+  - id: Q10
+    domain: Application Design and Build (20%)
+    topic: Utilize persistent and ephemeral volumes
+    scenario: |
+      Create a Pod that uses both ephemeral (emptyDir) and persistent storage.
+    tasks: |
+      1. Create Pod 'notifier-mixed' in namespace 'team-beta' using image 'nginx:alpine'
+      2. Add an emptyDir volume 'cache' mounted at /var/cache/nginx
+      3. Add a hostPath volume 'logs' mounted at /var/log/nginx (host path: /tmp/nginx-logs)
+      4. Verify both mounts exist inside the container
+      5. Write a file to each mount and verify from host or container
+    setup:
+      - name: ensure team-beta namespace exists
+        run: kubectl create namespace team-beta --dry-run=client -o yaml | kubectl apply -f -
+    verify:
+      - name: pod has both emptyDir and hostPath volumes
+        run: kubectl get pod notifier-mixed -n team-beta -o jsonpath='{.spec.volumes[*].name}'
+        expect:
+          contains: cache
+      - name: hostPath volume is present
+        run: kubectl get pod notifier-mixed -n team-beta -o jsonpath='{.spec.volumes[?(@.hostPath)].name}'
+        expect:
+          contains: logs
+    teardown:
+      - run: kubectl delete pod notifier-mixed -n team-beta --ignore-not-found --wait=false
+    hints: |
+      emptyDir is ephemeral and shared between containers. hostPath mounts a directory from the node filesystem.
+
+  - id: Q11
+    domain: Application Design and Build (20%)
+    topic: Utilize persistent and ephemeral volumes
+    scenario: |
+      Create a StatefulSet with persistent volume claims for each replica.
+    tasks: |
+      1. Create a headless Service 'cache' in namespace 'workloads' (clusterIP: None, ports: 8080)
+      2. Create a StatefulSet 'cache-stateful' with 3 replicas using image 'nginx:alpine'
+      3. Add a volumeClaimTemplate requesting 500Mi (use the default StorageClass on your cluster)
+      4. Mount the volume at /usr/share/nginx/html
+      5. Write unique index.html content in each Pod
+      6. Verify each Pod has its own persistent storage
+    setup:
+      - name: ensure workloads namespace exists
+        run: kubectl create namespace workloads --dry-run=client -o yaml | kubectl apply -f -
+    verify:
+      - name: Service cache exists
+        run: kubectl get service cache -n workloads -o name
+        expect:
+          contains: service/cache
+      - name: Service cache is headless (clusterIP None)
+        run: kubectl get service cache -n workloads -o jsonpath='{.spec.clusterIP}'
+        expect:
+          equals: None
+      - name: StatefulSet cache-stateful exists
+        run: kubectl get statefulset cache-stateful -n workloads -o name
+        expect:
+          contains: statefulset.apps/cache-stateful
+      - name: StatefulSet has 3 ready replicas
+        run: kubectl get statefulset cache-stateful -n workloads -o jsonpath='{.status.readyReplicas}'
+        expect:
+          equals: "3"
+    teardown:
+      - run: kubectl delete statefulset cache-stateful -n workloads --ignore-not-found
+      - run: kubectl delete service cache -n workloads --ignore-not-found
+    hints: |
+      StatefulSet + volumeClaimTemplate creates a PVC per replica. Headless service provides stable network identity.

@@ -1,0 +1,216 @@
+# Application Deployment drills.
+#
+# Exercises the YAML bank format across a range of expectation kinds:
+# - equals      : exact stdout match
+# - contains    : substring match
+# - not_contains: substring must be absent
+# - regex       : python regex match
+# - exit_code   : explicit exit-code expectation
+#
+# All drills target well-known namespaces which the runtime rewrites to
+# whatever you pass via --namespace.
+
+questions:
+  - id: Q12
+    domain: Application Deployment (20%)
+    topic: Use Kubernetes primitives to implement common deployment strategies (blue/green or canary)
+    scenario: |
+      Implement a blue/green deployment for 'notifier' in namespace 'ckad-practice'.
+    tasks: |
+      1. Create Deployment 'notifier-blue' with 3 replicas, image 'busybox:1.36', labels: version=blue
+      2. Create Service 'notifier' selector: version=blue, port 8080
+      3. Create Deployment 'notifier-green' with 3 replicas, image 'busybox:latest', labels: version=green
+      4. Verify green is ready, then switch Service selector to version=green
+      5. Verify traffic now routes to green Pods
+    setup:
+      - name: ensure ckad-practice namespace exists
+        run: kubectl create namespace ckad-practice --dry-run=client -o yaml | kubectl apply -f -
+    verify:
+      - name: Deployment notifier-blue exists
+        run: kubectl get deployment notifier-blue -n ckad-practice -o name
+        expect:
+          contains: deployment.apps/notifier-blue
+      - name: Deployment has 3 ready replicas
+        run: kubectl get deployment notifier-blue -n ckad-practice -o jsonpath='{.status.readyReplicas}'
+        expect:
+          equals: "3"
+      - name: Service notifier exists
+        run: kubectl get service notifier -n ckad-practice -o name
+        expect:
+          contains: service/notifier
+      - name: endpoints notifier are populated
+        run: kubectl get endpoints notifier -n ckad-practice -o jsonpath='{.subsets[0].addresses[0].ip}'
+        expect:
+          regex: '^\d+\.\d+\.\d+\.\d+$'
+    teardown:
+      - run: kubectl delete deployment notifier-blue notifier-green -n ckad-practice --ignore-not-found
+      - run: kubectl delete service notifier -n ckad-practice --ignore-not-found
+    hints: |
+      Blue/green: two parallel deployments, one Service. Switch selector to cut over instantly.
+
+  - id: Q13
+    domain: Application Deployment (20%)
+    topic: Use Kubernetes primitives to implement common deployment strategies (blue/green or canary)
+    scenario: |
+      Implement a canary deployment for 'api' in namespace 'team-alpha'.
+    tasks: |
+      1. Create Deployment 'api-stable' with 9 replicas, image 'alpine:3.18', labels: app=api,track=stable
+      2. Create Service 'api' selector: app=api, port 3306
+      3. Create Deployment 'api-canary' with 1 replica, image 'alpine:latest', labels: app=api,track=canary
+      4. Verify both deployments are exposed through the same Service
+      5. Scale canary to 5 and stable to 5 to complete the rollout
+      6. Delete stable deployment when canary is verified
+    setup:
+      - name: ensure team-alpha namespace exists
+        run: kubectl create namespace team-alpha --dry-run=client -o yaml | kubectl apply -f -
+    verify:
+      - name: Deployment api-stable exists
+        run: kubectl get deployment api-stable -n team-alpha -o name
+        expect:
+          contains: deployment.apps/api-stable
+      - name: Deployment api-canary exists
+        run: kubectl get deployment api-canary -n team-alpha -o name
+        expect:
+          contains: deployment.apps/api-canary
+      - name: Service api selects only by app label (not track)
+        run: kubectl get service api -n team-alpha -o jsonpath='{.spec.selector}'
+        expect:
+          not_contains: track
+      - name: endpoints api are populated
+        run: kubectl get endpoints api -n team-alpha -o jsonpath='{.subsets[0].addresses[0].ip}'
+        expect:
+          regex: '^\d+\.\d+\.\d+\.\d+$'
+    teardown:
+      - run: kubectl delete deployment api-stable api-canary -n team-alpha --ignore-not-found
+      - run: kubectl delete service api -n team-alpha --ignore-not-found
+    hints: |
+      Canary: both deployments share the same app label but have different track labels. Service selects only app label.
+
+  - id: Q14
+    domain: Application Deployment (20%)
+    topic: Understand Deployments and how to perform rolling updates
+    scenario: |
+      Perform a controlled rolling update of 'scheduler' in namespace 'workloads'.
+    tasks: |
+      1. Create Deployment 'scheduler' with 4 replicas, image 'redis:7-alpine', port 9000
+      2. Set strategy: RollingUpdate, maxSurge=2, maxUnavailable=1
+      3. Update the image to 'redis:latest'
+      4. Monitor rollout status with 'kubectl rollout status'
+      5. Verify all Pods use the new image
+      6. Rollback to previous revision and confirm old image is restored
+    setup:
+      - name: ensure workloads namespace exists
+        run: kubectl create namespace workloads --dry-run=client -o yaml | kubectl apply -f -
+    verify:
+      - name: Deployment scheduler exists
+        run: kubectl get deployment scheduler -n workloads -o name
+        expect:
+          contains: deployment.apps/scheduler
+      - name: Deployment has 4 ready replicas
+        run: kubectl get deployment scheduler -n workloads -o jsonpath='{.status.readyReplicas}'
+        expect:
+          equals: "4"
+      - name: strategy.type is RollingUpdate
+        run: kubectl get deployment scheduler -n workloads -o jsonpath='{.spec.strategy.type}'
+        expect:
+          equals: RollingUpdate
+      - name: maxSurge=2 and maxUnavailable=1
+        run: kubectl get deployment scheduler -n workloads -o jsonpath='{.spec.strategy.rollingUpdate.maxSurge}/{.spec.strategy.rollingUpdate.maxUnavailable}'
+        expect:
+          equals: 2/1
+      - name: rollout history has at least 2 revisions
+        run: kubectl rollout history deployment/scheduler -n workloads --output=jsonpath='{range .items[*]}{.metadata.annotations.deployment\.kubernetes\.io/revision}{"\n"}{end}' 2>/dev/null || kubectl rollout history deployment/scheduler -n workloads | awk '/^[0-9]+ /{c++} END{print c}'
+        expect:
+          regex: "^[2-9]$|^[1-9][0-9]+$"
+    teardown:
+      - run: kubectl delete deployment scheduler -n workloads --ignore-not-found
+    hints: |
+      maxSurge controls how many extra Pods can be created. maxUnavailable controls how many Pods can be down during update.
+
+  - id: Q15
+    domain: Application Deployment (20%)
+    topic: Use the Helm package manager to deploy existing packages
+    scenario: |
+      Deploy a chart from a Helm repository into namespace 'dev'. Requires the `helm` binary on PATH.
+    tasks: |
+      1. Add the bitnami Helm repository: helm repo add bitnami https://charts.bitnami.com/bitnami
+      2. Update repo index: helm repo update
+      3. Search for a 'nginx' chart in the bitnami repo
+      4. Install the chart as 'backend-nginx' in namespace 'dev' with --create-namespace
+      5. Verify the release with 'helm list -n dev'
+      6. Upgrade the release to set replicaCount=3
+      7. Rollback the release to revision 1
+    setup:
+      - name: ensure helm is installed
+        run: command -v helm >/dev/null || (echo "helm CLI is required for this drill" >&2; false)
+      - name: ensure dev namespace exists
+        run: kubectl create namespace dev --dry-run=client -o yaml | kubectl apply -f -
+    verify:
+      - name: Helm release backend-nginx exists in dev
+        run: helm list -n dev --filter '^backend-nginx$' -q
+        expect:
+          contains: backend-nginx
+      - name: Helm release has multiple revisions (upgrade/rollback performed)
+        run: helm history backend-nginx -n dev -o json | grep -o '"revision"' | wc -l | tr -d ' '
+        expect:
+          regex: "^[2-9]$|^[1-9][0-9]+$"
+    teardown:
+      - run: helm uninstall backend-nginx -n dev || true
+    hints: |
+      Helm manages releases with revisions. Use 'helm install', 'helm upgrade', 'helm rollback', 'helm uninstall'.
+
+  - id: Q16
+    domain: Application Deployment (20%)
+    topic: Use the Helm package manager to deploy existing packages
+    scenario: |
+      Create a simple Helm chart for 'processor' and deploy it. Requires the `helm` binary on PATH.
+    tasks: |
+      1. Create a new Helm chart: helm create processor-chart
+      2. Modify values.yaml to use image 'nginx:alpine' and replicaCount=2
+      3. Update templates/deployment.yaml to add a readiness probe on port 80
+      4. Package the chart: helm package processor-chart
+      5. Install the chart in namespace 'team-alpha'
+      6. Verify the deployed application
+    setup:
+      - name: ensure helm is installed
+        run: command -v helm >/dev/null || (echo "helm CLI is required for this drill" >&2; false)
+      - name: ensure team-alpha namespace exists
+        run: kubectl create namespace team-alpha --dry-run=client -o yaml | kubectl apply -f -
+    verify:
+      - name: Helm release exists in team-alpha
+        run: helm list -n team-alpha -q
+        expect:
+          regex: '\S+'
+    teardown:
+      - run: helm uninstall processor-chart -n team-alpha 2>/dev/null || true
+    hints: |
+      Helm charts use Go templates. values.yaml feeds variables into templates.
+
+  - id: Q17
+    domain: Application Deployment (20%)
+    topic: Kustomize
+    scenario: |
+      Use Kustomize to manage environment-specific configurations for 'webapp'. Requires `kubectl` 1.14+ (built-in kustomize) or the standalone `kustomize` binary.
+    tasks: |
+      1. Create a base directory with a Deployment manifest for 'webapp' (image: nginx:alpine, 2 replicas)
+      2. Create an overlay for 'staging' that changes replicas to 3 and adds resource limits
+      3. Create an overlay for 'prod' that changes replicas to 5 and adds a nodeSelector
+      4. Build the staging overlay: kubectl kustomize overlays/staging
+      5. Apply the prod overlay into namespace 'workloads': kubectl apply -k overlays/prod -n workloads
+      6. Verify the differences between environments with `kubectl diff -k overlays/prod`
+    setup:
+      - name: ensure workloads namespace exists
+        run: kubectl create namespace workloads --dry-run=client -o yaml | kubectl apply -f -
+    verify:
+      - name: Deployment webapp exists in workloads
+        run: kubectl get deployment webapp -n workloads -o name
+        expect:
+          contains: deployment.apps/webapp
+      - name: prod overlay scales to 5 replicas
+        run: kubectl get deployment webapp -n workloads -o jsonpath='{.spec.replicas}'
+        expect:
+          equals: "5"
+    teardown:
+      - run: kubectl delete deployment webapp -n workloads --ignore-not-found
+    hints: |
+      Kustomize uses bases + overlays. kustomization.yaml defines resources, patches, and common customizations.

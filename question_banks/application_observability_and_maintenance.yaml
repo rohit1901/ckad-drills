@@ -1,0 +1,234 @@
+# Application Observability and Maintenance drills.
+#
+# Exercises the YAML bank format across a range of expectation kinds:
+# - equals      : exact stdout match
+# - contains    : substring match
+# - not_contains: substring must be absent
+# - regex       : python regex match
+# - exit_code   : explicit exit-code expectation
+#
+# All drills target well-known namespaces which the runtime rewrites to
+# whatever you pass via --namespace.
+
+questions:
+  - id: Q18
+    domain: Application Observability and Maintenance (15%)
+    topic: Understand API deprecations
+    scenario: |
+      Identify and migrate deprecated API usage for 'backend' in namespace 'staging'.
+    tasks: |
+      1. Use 'kubectl api-versions' to list available API versions
+      2. Use 'kubectl api-resources' to list every resource and its current preferred API version
+      3. For each manifest you author, use the current stable API version (e.g. apps/v1 for Deployments, networking.k8s.io/v1 for Ingress/NetworkPolicy, batch/v1 for CronJob)
+      4. Create Deployment 'backend' in namespace 'staging' using apiVersion 'apps/v1' and image 'nginx:alpine'
+      5. Verify the Deployment is running and stored under apps/v1
+    setup:
+      - name: ensure staging namespace exists
+        run: kubectl create namespace staging --dry-run=client -o yaml | kubectl apply -f -
+    verify:
+      - name: apps/v1 is served by the cluster
+        run: kubectl api-versions
+        expect:
+          contains: apps/v1
+      - name: Deployment backend exists in staging
+        run: kubectl get deployment backend -n staging -o name
+        expect:
+          contains: deployment.apps/backend
+    teardown:
+      - run: kubectl delete deployment backend -n staging --ignore-not-found
+    hints: |
+      Check 'kubectl api-resources' and 'kubectl explain' for current API versions. Always pin to stable groups (apps/v1, batch/v1, networking.k8s.io/v1).
+
+  - id: Q19
+    domain: Application Observability and Maintenance (15%)
+    topic: Implement probes and health checks
+    scenario: |
+      Create a robust health checking setup for 'frontend' in namespace 'dev'.
+    tasks: |
+      1. Create Deployment 'frontend' with 2 replicas, image 'nginx:alpine', port 80
+      2. Add livenessProbe: HTTP GET / on port 80, initialDelaySeconds=10, periodSeconds=5
+      3. Add readinessProbe: HTTP GET / on port 80, initialDelaySeconds=5, periodSeconds=3
+      4. Add startupProbe: HTTP GET / on port 80, failureThreshold=18, periodSeconds=5
+      5. Verify probes are configured with 'kubectl describe pod'
+      6. Intentionally point the livenessProbe at /does-not-exist and observe restart behavior
+    setup:
+      - name: ensure dev namespace exists
+        run: kubectl create namespace dev --dry-run=client -o yaml | kubectl apply -f -
+    verify:
+      - name: Deployment frontend exists
+        run: kubectl get deployment frontend -n dev -o name
+        expect:
+          contains: deployment.apps/frontend
+      - name: Deployment has 2 ready replicas
+        run: kubectl get deployment frontend -n dev -o jsonpath='{.status.readyReplicas}'
+        expect:
+          equals: "2"
+      - name: container defines a livenessProbe
+        run: kubectl get deployment frontend -n dev -o jsonpath='{.spec.template.spec.containers[0].livenessProbe}'
+        expect:
+          contains: httpGet
+      - name: container defines a readinessProbe
+        run: kubectl get deployment frontend -n dev -o jsonpath='{.spec.template.spec.containers[0].readinessProbe}'
+        expect:
+          contains: httpGet
+      - name: container defines a startupProbe
+        run: kubectl get deployment frontend -n dev -o jsonpath='{.spec.template.spec.containers[0].startupProbe}'
+        expect:
+          contains: httpGet
+    teardown:
+      - run: kubectl delete deployment frontend -n dev --ignore-not-found
+    hints: |
+      Startup probe disables liveness and readiness until it succeeds. This prevents premature restarts of slow-starting apps.
+
+  - id: Q20
+    domain: Application Observability and Maintenance (15%)
+    topic: Implement probes and health checks
+    scenario: |
+      Configure TCP socket and exec probes for 'notifier' in namespace 'team-alpha'.
+    tasks: |
+      1. Create Pod 'notifier-tcp' in namespace 'team-alpha' running image 'nginx:alpine' (listens on port 80)
+      2. Add livenessProbe: TCP socket check on port 80, initialDelaySeconds=15
+      3. Add readinessProbe: exec command ['test', '-f', '/tmp/ready']
+      4. Exec into the Pod and create /tmp/ready to mark it ready
+      5. Remove /tmp/ready and observe the Pod becoming not-ready
+      6. Restore /tmp/ready and verify it becomes ready again
+    setup:
+      - name: ensure team-alpha namespace exists
+        run: kubectl create namespace team-alpha --dry-run=client -o yaml | kubectl apply -f -
+    verify:
+      - name: pod notifier-tcp exists
+        run: kubectl get pod notifier-tcp -n team-alpha -o name
+        expect:
+          equals: pod/notifier-tcp
+      - name: livenessProbe uses tcpSocket
+        run: kubectl get pod notifier-tcp -n team-alpha -o jsonpath='{.spec.containers[0].livenessProbe}'
+        expect:
+          contains: tcpSocket
+      - name: readinessProbe uses exec
+        run: kubectl get pod notifier-tcp -n team-alpha -o jsonpath='{.spec.containers[0].readinessProbe}'
+        expect:
+          contains: exec
+    teardown:
+      - run: kubectl delete pod notifier-tcp -n team-alpha --ignore-not-found --wait=false
+    hints: |
+      TCP probes check port connectivity. Exec probes run commands inside the container. Use 'kubectl exec' to manipulate readiness.
+
+  - id: Q21
+    domain: Application Observability and Maintenance (15%)
+    topic: Use built-in CLI tools to monitor Kubernetes applications
+    scenario: |
+      Monitor resource usage and status of 'processor' in namespace 'team-beta'. `kubectl top` requires metrics-server.
+    tasks: |
+      1. Create Deployment 'processor' with 3 replicas, image 'nginx:alpine' and small resource requests
+      2. If metrics-server is installed, use 'kubectl top pod -n team-beta' to check CPU/memory usage
+      3. Use 'kubectl top node' to check node-level resources (if available)
+      4. Watch Pod status changes with 'kubectl get pods -n team-beta -w'
+      5. Sort Pods by restart count: 'kubectl get pods -n team-beta --sort-by=.status.containerStatuses[0].restartCount'
+      6. Use 'kubectl get events -n team-beta --sort-by=.lastTimestamp | tail -20' to inspect recent activity
+    setup:
+      - name: ensure team-beta namespace exists
+        run: kubectl create namespace team-beta --dry-run=client -o yaml | kubectl apply -f -
+    verify:
+      - name: Deployment processor exists
+        run: kubectl get deployment processor -n team-beta -o name
+        expect:
+          contains: deployment.apps/processor
+      - name: Deployment has 3 ready replicas
+        run: kubectl get deployment processor -n team-beta -o jsonpath='{.status.readyReplicas}'
+        expect:
+          equals: "3"
+      - name: events for the namespace can be sorted
+        run: kubectl get events -n team-beta --sort-by=.lastTimestamp
+        expect:
+          exit_code: 0
+    teardown:
+      - run: kubectl delete deployment processor -n team-beta --ignore-not-found
+    hints: |
+      metrics-server provides top metrics. If not installed, focus on kubectl get/describe/events commands.
+
+  - id: Q22
+    domain: Application Observability and Maintenance (15%)
+    topic: Utilize container logs
+    scenario: |
+      Collect and analyze logs from 'processor' in namespace 'prod'.
+    tasks: |
+      1. Create Deployment 'processor' (image 'busybox:1.36', 2 replicas) whose container runs:
+         `sh -c 'i=0; while true; do echo "processor [INFO] tick=$i"; i=$((i+1)); sleep 2; done'`
+      2. View logs from a single Pod: 'kubectl logs <pod-name> -n prod'
+      3. View aggregated logs across replicas: 'kubectl logs -l app=processor -n prod --tail=20'
+      4. Stream logs in real time: 'kubectl logs -f deployment/processor -n prod'
+      5. View previous container logs after a restart: 'kubectl logs <pod-name> -n prod --previous'
+      6. Save the last 100 lines to a file: 'kubectl logs -l app=processor -n prod --tail=100 > processor.log'
+    setup:
+      - name: ensure prod namespace exists
+        run: kubectl create namespace prod --dry-run=client -o yaml | kubectl apply -f -
+    verify:
+      - name: Deployment processor exists
+        run: kubectl get deployment processor -n prod -o name
+        expect:
+          contains: deployment.apps/processor
+      - name: aggregated logs contain the structured tick message
+        run: kubectl logs -l app=processor -n prod --tail=20 --all-containers
+        expect:
+          regex: 'processor \[INFO\] tick='
+    teardown:
+      - run: kubectl delete deployment processor -n prod --ignore-not-found
+    hints: |
+      Use labels to aggregate logs across replicas. --previous shows logs from crashed containers.
+
+  - id: Q23
+    domain: Application Observability and Maintenance (15%)
+    topic: Debugging in Kubernetes
+    scenario: |
+      A Deployment 'api' in namespace 'ckad-practice' is failing. Debug and fix it.
+    tasks: |
+      1. Investigate why Pods are in CrashLoopBackOff using 'kubectl describe pod' and 'kubectl logs'
+      2. Check for common issues: wrong image name, missing ConfigMap/Secret, resource limits too low
+      3. Verify events with 'kubectl get events -n ckad-practice'
+      4. Fix the identified issue (e.g., correct the image tag or add missing env var)
+      5. Verify the Deployment recovers and Pods reach Running state
+    setup:
+      - name: ensure ckad-practice namespace exists
+        run: kubectl create namespace ckad-practice --dry-run=client -o yaml | kubectl apply -f -
+    verify:
+      - name: Deployment api exists
+        run: kubectl get deployment api -n ckad-practice -o name
+        expect:
+          contains: deployment.apps/api
+      - name: Deployment has at least 1 ready replica after debugging
+        run: kubectl get deployment api -n ckad-practice -o jsonpath='{.status.readyReplicas}'
+        expect:
+          regex: '^[1-9]\d*$'
+    teardown:
+      - run: kubectl delete deployment api -n ckad-practice --ignore-not-found
+    hints: |
+      Debugging flow: describe pod -> check events -> check logs -> fix manifest -> re-apply.
+
+  - id: Q24
+    domain: Application Observability and Maintenance (15%)
+    topic: Debugging in Kubernetes
+    scenario: |
+      A Service 'frontend' in namespace 'team-alpha' is not routing traffic correctly.
+    tasks: |
+      1. Verify the Service exists and has endpoints: 'kubectl get svc,endpoints frontend -n team-alpha'
+      2. Check if selector labels match Pod labels
+      3. Verify Pods are ready (readiness probe passing)
+      4. Test connectivity from a debug Pod: 'kubectl run debug --rm -it --image=busybox -n team-alpha -- wget -qO- http://frontend'
+      5. Check for NetworkPolicy blocking traffic
+      6. Fix any mismatched labels or policies and verify
+    setup:
+      - name: ensure team-alpha namespace exists
+        run: kubectl create namespace team-alpha --dry-run=client -o yaml | kubectl apply -f -
+    verify:
+      - name: Service frontend exists
+        run: kubectl get service frontend -n team-alpha -o name
+        expect:
+          contains: service/frontend
+      - name: endpoints frontend are populated
+        run: kubectl get endpoints frontend -n team-alpha -o jsonpath='{.subsets[0].addresses[0].ip}'
+        expect:
+          regex: '^\d+\.\d+\.\d+\.\d+$'
+    teardown:
+      - run: kubectl delete service frontend -n team-alpha --ignore-not-found
+    hints: |
+      No endpoints = selector mismatch or no ready Pods. Use a debug Pod to test network paths.

@@ -1,0 +1,15 @@
+questions:
+  - id: EX01
+    domain: Domain A
+    topic: Topic A
+    scenario: Blueprint Scenario A
+    tasks: Blueprint Tasks A
+    verify: verify-a
+    hints: Hint A
+  - id: EX02
+    domain: Domain B
+    topic: Topic B
+    scenario: Blueprint Scenario B
+    tasks: Blueprint Tasks B
+    verify: verify-b
+    hints: Hint B

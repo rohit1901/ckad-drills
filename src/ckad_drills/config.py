@@ -58,29 +58,31 @@ NAMESPACED_CLEANUP_RESOURCES = (
     "resourcequotas",
     "limitranges",
 )
-BASE_QUESTION_BANK_FILE = "ckad_full_question_bank.csv"
-EXAM_BLUEPRINT_FILE = "ckad_balanced_exam.csv"
 QUESTION_BANK_EXTENSION_DIR = "question_banks"
+# Curated exam blueprint (15 (domain, topic) slots). Lives inside the
+# question_banks/ directory but is treated as exam-only metadata, not as a
+# question bank itself.
+EXAM_BLUEPRINT_FILE = "balanced_exam.yaml"
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
 PROJECT_ROOT = PACKAGE_ROOT.parent.parent
 
 
-def resolve_dataset_path(mode: str) -> Path:
-    if mode == "exam":
-        return resolve_exam_blueprint_path()
-    return resolve_base_question_bank_path()
-
-
-def resolve_base_question_bank_path() -> Path:
-    return PROJECT_ROOT / BASE_QUESTION_BANK_FILE
-
-
 def resolve_exam_blueprint_path() -> Path:
-    return PROJECT_ROOT / EXAM_BLUEPRINT_FILE
+    """Return the path to the YAML exam blueprint.
+
+    The blueprint defines (domain, topic) slots used by ``select_exam_questions``
+    to draw a balanced, CKAD-shaped exam from the full YAML question bank.
+    """
+    return PROJECT_ROOT / QUESTION_BANK_EXTENSION_DIR / EXAM_BLUEPRINT_FILE
 
 
 def resolve_question_bank_extension_paths() -> list[Path]:
+    """Return optional CSV extension banks under ``question_banks/`` (``*.csv``).
+
+    The CSV format is still supported as a legacy extension surface, but the
+    project no longer ships a base CSV bank.
+    """
     extension_dir = PROJECT_ROOT / QUESTION_BANK_EXTENSION_DIR
     if not extension_dir.exists():
         return []
@@ -88,12 +90,21 @@ def resolve_question_bank_extension_paths() -> list[Path]:
 
 
 def resolve_yaml_question_bank_paths() -> list[Path]:
-    """Return YAML question-bank files under ``question_banks/`` (``*.yaml`` and ``*.yml``)."""
+    """Return YAML question-bank files under ``question_banks/`` (``*.yaml``/``*.yml``).
+
+    The exam blueprint file is excluded from this list because it is consumed
+    by exam mode separately, not as part of the full question pool.
+    """
     extension_dir = PROJECT_ROOT / QUESTION_BANK_EXTENSION_DIR
     if not extension_dir.exists():
         return []
+    blueprint = extension_dir / EXAM_BLUEPRINT_FILE
     return sorted(
         path
         for path in extension_dir.iterdir()
-        if path.is_file() and path.suffix.lower() in (".yaml", ".yml")
+        if (
+            path.is_file()
+            and path.suffix.lower() in (".yaml", ".yml")
+            and path != blueprint
+        )
     )

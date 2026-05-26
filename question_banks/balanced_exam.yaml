@@ -1,0 +1,203 @@
+# CKAD-style balanced exam blueprint.
+#
+# This file is loaded by exam mode ONLY (see `--mode exam` in the CLI). The
+# runtime uses each entry's (domain, topic) pair as a "slot" and samples a
+# real question with a matching (or domain-only fallback) shape from the full
+# YAML question bank. The scenario / tasks / verify content here is never
+# shown to the student, so they're intentionally minimal — edit this file
+# only to rebalance the exam shape.
+#
+# The 15-slot mix below tracks the published CKAD weighting:
+#   Application Design and Build               20%  -> 3 slots
+#   Application Deployment                     20%  -> 3 slots
+#   Application Observability and Maintenance  15%  -> 2 slots
+#   Application Environment, Config & Security 25%  -> 4 slots
+#   Services and Networking                    20%  -> 3 slots
+#                                              ---     --
+#                                             100%    15
+
+questions:
+  # ---- Application Design and Build (3 slots) ------------------------------
+  - id: EX_DESIGN_IMAGES
+    domain: Application Design and Build (20%)
+    topic: Define, build, and modify container images
+    scenario: |
+      Blueprint slot — drawn from the Application Design and Build pool.
+    tasks: |
+      (Not shown to the student. See the slot's sampled question.)
+    verify: |
+      true
+    hints: |
+      Slot metadata only.
+
+  - id: EX_DESIGN_MULTICONTAINER
+    domain: Application Design and Build (20%)
+    topic: Understand multi-container Pod design patterns (sidecar, init, and others)
+    scenario: |
+      Blueprint slot — drawn from the Application Design and Build pool.
+    tasks: |
+      (Not shown to the student. See the slot's sampled question.)
+    verify: |
+      true
+    hints: |
+      Slot metadata only.
+
+  - id: EX_DESIGN_VOLUMES
+    domain: Application Design and Build (20%)
+    topic: Utilize persistent and ephemeral volumes
+    scenario: |
+      Blueprint slot — drawn from the Application Design and Build pool.
+    tasks: |
+      (Not shown to the student. See the slot's sampled question.)
+    verify: |
+      true
+    hints: |
+      Slot metadata only.
+
+  # ---- Application Deployment (3 slots) ------------------------------------
+  - id: EX_DEPLOY_STRATEGY
+    domain: Application Deployment (20%)
+    topic: Use Kubernetes primitives to implement common deployment strategies (blue/green or canary)
+    scenario: |
+      Blueprint slot — drawn from the Application Deployment pool.
+    tasks: |
+      (Not shown to the student. See the slot's sampled question.)
+    verify: |
+      true
+    hints: |
+      Slot metadata only.
+
+  - id: EX_DEPLOY_ROLLING
+    domain: Application Deployment (20%)
+    topic: Understand Deployments and how to perform rolling updates
+    scenario: |
+      Blueprint slot — drawn from the Application Deployment pool.
+    tasks: |
+      (Not shown to the student. See the slot's sampled question.)
+    verify: |
+      true
+    hints: |
+      Slot metadata only.
+
+  - id: EX_DEPLOY_HELM
+    domain: Application Deployment (20%)
+    topic: Use the Helm package manager to deploy existing packages
+    scenario: |
+      Blueprint slot — drawn from the Application Deployment pool.
+    tasks: |
+      (Not shown to the student. See the slot's sampled question.)
+    verify: |
+      true
+    hints: |
+      Slot metadata only.
+
+  # ---- Application Observability and Maintenance (2 slots) ----------------
+  - id: EX_OBS_PROBES
+    domain: Application Observability and Maintenance (15%)
+    topic: Implement probes and health checks
+    scenario: |
+      Blueprint slot — drawn from the Application Observability and Maintenance pool.
+    tasks: |
+      (Not shown to the student. See the slot's sampled question.)
+    verify: |
+      true
+    hints: |
+      Slot metadata only.
+
+  - id: EX_OBS_DEBUG
+    domain: Application Observability and Maintenance (15%)
+    topic: Debugging in Kubernetes
+    scenario: |
+      Blueprint slot — drawn from the Application Observability and Maintenance pool.
+    tasks: |
+      (Not shown to the student. See the slot's sampled question.)
+    verify: |
+      true
+    hints: |
+      Slot metadata only.
+
+  # ---- Application Environment, Configuration and Security (4 slots) ------
+  - id: EX_ENV_CONFIGMAPS
+    domain: Application Environment, Configuration and Security (25%)
+    topic: Understand ConfigMaps
+    scenario: |
+      Blueprint slot — drawn from the Application Environment, Configuration and Security pool.
+    tasks: |
+      (Not shown to the student. See the slot's sampled question.)
+    verify: |
+      true
+    hints: |
+      Slot metadata only.
+
+  - id: EX_ENV_SECRETS
+    domain: Application Environment, Configuration and Security (25%)
+    topic: Create & consume Secrets
+    scenario: |
+      Blueprint slot — drawn from the Application Environment, Configuration and Security pool.
+    tasks: |
+      (Not shown to the student. See the slot's sampled question.)
+    verify: |
+      true
+    hints: |
+      Slot metadata only.
+
+  - id: EX_ENV_SECURITY
+    domain: Application Environment, Configuration and Security (25%)
+    topic: Understand Application Security (SecurityContexts, Capabilities, etc.)
+    scenario: |
+      Blueprint slot — drawn from the Application Environment, Configuration and Security pool.
+    tasks: |
+      (Not shown to the student. See the slot's sampled question.)
+    verify: |
+      true
+    hints: |
+      Slot metadata only.
+
+  - id: EX_ENV_RBAC
+    domain: Application Environment, Configuration and Security (25%)
+    topic: Understand authentication, authorization, and admission control
+    scenario: |
+      Blueprint slot — drawn from the Application Environment, Configuration and Security pool.
+    tasks: |
+      (Not shown to the student. See the slot's sampled question.)
+    verify: |
+      true
+    hints: |
+      Slot metadata only.
+
+  # ---- Services and Networking (3 slots) ----------------------------------
+  - id: EX_NET_SERVICES
+    domain: Services and Networking (20%)
+    topic: Provide and troubleshoot access to applications via services
+    scenario: |
+      Blueprint slot — drawn from the Services and Networking pool.
+    tasks: |
+      (Not shown to the student. See the slot's sampled question.)
+    verify: |
+      true
+    hints: |
+      Slot metadata only.
+
+  - id: EX_NET_POLICIES
+    domain: Services and Networking (20%)
+    topic: Demonstrate basic understanding of NetworkPolicies
+    scenario: |
+      Blueprint slot — drawn from the Services and Networking pool.
+    tasks: |
+      (Not shown to the student. See the slot's sampled question.)
+    verify: |
+      true
+    hints: |
+      Slot metadata only.
+
+  - id: EX_NET_INGRESS
+    domain: Services and Networking (20%)
+    topic: Use Ingress rules to expose applications
+    scenario: |
+      Blueprint slot — drawn from the Services and Networking pool.
+    tasks: |
+      (Not shown to the student. See the slot's sampled question.)
+    verify: |
+      true
+    hints: |
+      Slot metadata only.

@@ -80,7 +80,7 @@ To start a balanced exam-style session:
 
 Both targets depend on `make kind-up`, so the local cluster is created automatically (or reused if already up) before drills start.
 
-Exam mode is dynamic: it uses `ckad_balanced_exam.csv` as a blueprint for balanced coverage, then selects matching questions from the full question bank. That means you can get a different exam set on different runs while keeping the intended balance.
+Exam mode is dynamic: it uses `question_banks/balanced_exam.yaml` as a blueprint of `(domain, topic)` slots, then samples one matching question per slot from the full YAML question bank under `question_banks/`. That means you can get a different exam set on different runs while keeping the intended CKAD weighting (20% / 20% / 15% / 25% / 20% across the five domains).
 
 You can also run the CLI directly:
 
@@ -156,12 +156,13 @@ Likewise, `make kind-cleanup` honors `KIND_CLUSTER_NAME`:
 - `make kind-cleanup KIND_CLUSTER_NAME=my-cluster`
 
 ### What happens during a session
-1. The tool loads drills from one of the CSV files:
-   - `ckad_full_question_bank.csv`
-   - `ckad_balanced_exam.csv`
+1. The tool loads drills from the YAML banks under `question_banks/`
+   (and any optional `*.csv` extension files) — see
+   [`question_banks/README.md`](./question_banks/README.md) for the full
+   format reference.
 2. It rewrites the drill namespaces to your chosen practice namespace.
 3. It shows the scenario and tasks, but hides grading internals until the end.
-4. After you press Enter, it runs the `verify` commands from the CSV against your cluster.
+4. After you press Enter, it runs the drill's `verify` checks against your cluster.
 5. It prints:
    - pass/fail per drill
    - per-domain score breakdown
@@ -170,96 +171,98 @@ Likewise, `make kind-cleanup` honors `KIND_CLUSTER_NAME`:
 6. If cleanup is enabled, it runs the requested cleanup workflow and prints the cleanup status and commands used.
 
 ### Question bank structure
-The project now uses two concepts:
+The canonical question pool lives under `question_banks/`:
 
-- `ckad_full_question_bank.csv`
-  - the canonical base question bank
-- `ckad_balanced_exam.csv`
-  - an exam blueprint, not a fixed exam output list
+- `question_banks/*.yaml` — YAML question banks (preferred). Each entry
+  supports per-check verification (`equals` / `contains` / `not_contains` /
+  `regex` / `exit_code`) and optional `setup` / `teardown` phases.
+- `question_banks/balanced_exam.yaml` — the **exam blueprint**. Listed
+  there are `(domain, topic)` slots, not real questions. The runtime
+  samples a real question from the pool for each slot.
+- `question_banks/*.csv` — optional legacy CSV extension banks. Header
+  schema: `id,domain,topic,scenario,tasks,verify,hints` where `verify` is
+  a single shell pipeline whose exit code decides pass/fail.
 
-In exam mode, the CLI validates that every `id` in `ckad_balanced_exam.csv` exists in `ckad_full_question_bank.csv`, then builds a balanced exam dynamically from the full bank.
+In exam mode the CLI reads `balanced_exam.yaml`, then for each slot picks a
+question from the full pool whose `(domain, topic)` matches (falling back
+to domain-only when the exact topic isn't available).
 
 ### Extend the question bank
-If you want to add more questions, place additional files in:
+Drop additional files in `question_banks/`:
 
-- `question_banks/`
-
-Two formats are supported and loaded together:
-
-- **YAML (recommended for new content)** — `question_banks/*.yaml` or `*.yml`. Supports declarative per-check verification (`equals` / `contains` / `not_contains` / `regex` / `exit_code`) plus optional `setup` and `teardown` phases that run before and after the drill. See `question_banks/yaml_demo.yaml` for a complete example, and `question_banks/README.md` for the full schema reference.
-- **CSV (legacy)** — `question_banks/*.csv`. Must match the existing `ckad_full_question_bank.csv` schema (`id,domain,topic,scenario,tasks,verify,hints`) where `verify` is a single shell pipeline whose exit code decides pass/fail.
+- **YAML (recommended)** — `question_banks/*.yaml` or `*.yml`. Full schema
+  and examples in [`question_banks/README.md`](./question_banks/README.md)
+  and [`question_banks/yaml_demo.yaml`](./question_banks/yaml_demo.yaml).
+- **CSV (legacy)** — `question_banks/*.csv`. Same schema as above; one
+  shell-pipeline `verify` per row.
 
 Rules:
-- every question must have a unique `id` across all CSV + YAML files (including the base bank)
-- YAML drills get picked up in both `drills` mode and `exam` mode; in exam mode they're eligible whenever their `domain` / `topic` aligns with a blueprint slot
+- every question must have a unique `id` across **all** files in
+  `question_banks/` (YAML + CSV).
+- `balanced_exam.yaml` is treated as the exam blueprint and is excluded
+  from the drills-mode pool.
+- YAML drills get picked up in both `drills` mode and `exam` mode; in exam
+  mode they're eligible whenever their `domain` / `topic` matches a
+  blueprint slot.
 
 ### Guide: maintain the question bank and exam blueprint
 Use this workflow when you want to add new questions or evolve the exam over time.
 
 #### 1. Understand the roles of the files
-- `ckad_full_question_bank.csv`
-  - the canonical base bank
-  - blueprint ids are validated against this file
-- `ckad_balanced_exam.csv`
-  - a blueprint describing the balanced exam slots
-  - it is not the final exam output anymore
+- `question_banks/*.yaml` (excluding `balanced_exam.yaml`)
+  - the canonical question pool
+- `question_banks/balanced_exam.yaml`
+  - the exam blueprint — `(domain, topic)` slots only
 - `question_banks/*.csv`
-  - optional extension banks for new questions
-  - loaded automatically in drill mode and exam mode
+  - optional CSV extension banks
 
 #### 2. Add new questions safely
-You have two options:
-- add them directly to `ckad_full_question_bank.csv`
-- or add them as new CSV files under `question_banks/`
-
+Drop new YAML files into `question_banks/` (or extend an existing one).
 For each new question:
-- keep the same CSV schema
 - assign a unique `id`
-- make sure `domain` and `topic` are set consistently so exam mode can match blueprint slots well
-- provide a usable `verify` command and a meaningful `hints` value
+- set `domain` to one of the five CKAD domains, e.g.
+  `"Application Deployment (20%)"`
+- set `topic` to one of the curriculum sub-topics so exam mode can match
+  a blueprint slot
+- prefer the structured `verify:` list (per-check assertions) over the
+  legacy single-pipeline form
+- author against one of the well-known namespaces (`workloads`,
+  `team-alpha`, `team-beta`, `ckad-practice`, `dev`, `staging`, `prod`) —
+  the runtime rewrites them to whatever `--namespace` you pass
 
-#### 3. Example: add one new question step by step
-A simple way to add one new question without touching the base bank is:
+Run `make test` after editing to make sure the YAML parses and ids are unique.
 
-1. create a new CSV file under `question_banks/`, for example `question_banks/networking_extra.csv`
-2. add the standard header row:
-   - `id,domain,topic,scenario,tasks,verify,hints`
-3. add your new question row with:
-   - a brand new unique `id`
-   - a valid `domain`
-   - a useful `topic`
-   - a scenario, tasks, verify command, and hint
-4. run `make test` to make sure the project still passes validation
-5. run a drill or exam session and confirm the new question can be selected
-
-If the new question should help exam mode produce more variety, make its `domain` and `topic` align with one of the blueprint slots in `ckad_balanced_exam.csv`.
-
-#### 4. How dynamic exam generation works now
+#### 3. How dynamic exam generation works now
 When you run exam mode:
-1. the app loads the base question bank
-2. it loads any extension banks from `question_banks/`
-3. it loads `ckad_balanced_exam.csv` as a blueprint
-4. it validates that every blueprint `id` exists in `ckad_full_question_bank.csv`
-5. it randomly selects blueprint slots
-6. for each slot, it picks a matching question from the merged question bank
+1. the app loads every YAML / CSV file in `question_banks/` (except
+   `balanced_exam.yaml`) into a single pool
+2. it loads `balanced_exam.yaml` as a list of slots
+3. it shuffles the slots and, for each one, samples a real question from
+   the pool whose `(domain, topic)` matches (or domain-only if no exact
+   topic match exists)
 
-This means the exam can vary between runs while still staying balanced by domain and topic.
+This means the exam varies between runs while staying balanced by domain.
 
-#### 5. When to update `ckad_balanced_exam.csv`
+#### 4. When to update `balanced_exam.yaml`
 Update the blueprint when you want to change:
+- the number of questions in the exam
 - the balance across domains
 - the balance across topics
-- the number or style of exam slots
 
-You do not need to add every new question to the blueprint. The blueprint defines the exam shape, while the full bank and extension banks provide the actual selectable questions.
+You do **not** need to add every new question to the blueprint. The
+blueprint defines the exam shape; the YAML banks provide the selectable
+questions.
 
-#### 6. Best practice for future growth
-A good pattern is:
-- keep `ckad_full_question_bank.csv` as the stable canonical bank
-- add new batches of questions in separate files under `question_banks/`
-- only change `ckad_balanced_exam.csv` when you want to change exam composition rules
+#### 5. Best practice for future growth
+- keep one YAML file per domain so growth is naturally organized
+- assign new ids in domain-prefixed ranges if you prefer (e.g. `Q40`+ for
+  Design and Build) — ids only need to be globally unique, not
+  consecutive
+- only edit `balanced_exam.yaml` when you want to change exam composition
+  rules
 
-That keeps the system easy to extend without turning the exam file into a hard-coded static list.
+That keeps the system easy to extend without turning the exam file into a
+hard-coded static list.
 
 ### Cleanup modes
 The CLI supports opt-in cleanup after grading, and also as a standalone command:

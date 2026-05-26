@@ -1,281 +1,191 @@
 # Services and Networking drills.
 #
 # Exercises the YAML bank format across a range of expectation kinds:
-#   - equals      : exact stdout match
-#   - contains    : substring match
-#   - not_contains: substring must be absent
-#   - regex       : python regex match
-#   - exit_code   : explicit exit-code expectation
+# - equals      : exact stdout match
+# - contains    : substring match
+# - not_contains: substring must be absent
+# - regex       : python regex match
+# - exit_code   : explicit exit-code expectation
 #
-# All drills target the 'workloads' namespace, which the runtime rewrites to
+# All drills target well-known namespaces which the runtime rewrites to
 # whatever you pass via --namespace.
 
 questions:
-  - id: YNET01
-    domain: Services and Networking (20%)
-    topic: Demonstrate basic understanding of Services
-    scenario: |
-      A Deployment 'api' is already running in namespace 'workloads' exposing
-      port 8080 on each Pod. You need to expose it as an in-cluster Service so
-      other workloads can reach it by name.
-    tasks: |
-      1. Create a ClusterIP Service named 'api-svc' in namespace 'workloads'.
-      2. The Service must select Pods with label app=api.
-      3. The Service must expose port 80 and forward to target port 8080.
-      4. Confirm the Service has at least one ready endpoint.
-    setup:
-      - name: ensure workloads namespace exists
-        run: kubectl create namespace workloads --dry-run=client -o yaml | kubectl apply -f -
-      - name: seed the 'api' Deployment
-        apply: |
-          apiVersion: apps/v1
-          kind: Deployment
-          metadata:
-            name: api
-            namespace: workloads
-            labels:
-              app: api
-          spec:
-            replicas: 2
-            selector:
-              matchLabels:
-                app: api
-            template:
-              metadata:
-                labels:
-                  app: api
-              spec:
-                containers:
-                  - name: api
-                    image: hashicorp/http-echo:1.0
-                    args: ["-listen=:8080", "-text=hello"]
-                    ports:
-                      - containerPort: 8080
-      - name: wait for the 'api' Deployment to be Available
-        run: kubectl wait --for=condition=Available deployment/api -n workloads --timeout=60s
-    verify:
-      - name: service type is ClusterIP
-        run: kubectl get service api-svc -n workloads -o jsonpath='{.spec.type}'
-        expect:
-          equals: ClusterIP
-      - name: service selects app=api
-        run: kubectl get service api-svc -n workloads -o jsonpath='{.spec.selector.app}'
-        expect:
-          equals: api
-      - name: service exposes port 80 -> 8080
-        run: kubectl get service api-svc -n workloads -o jsonpath='{.spec.ports[0].port}:{.spec.ports[0].targetPort}'
-        expect:
-          equals: "80:8080"
-      - name: service has at least one ready endpoint
-        run: kubectl get endpoints api-svc -n workloads -o jsonpath='{.subsets[0].addresses[0].ip}'
-        expect:
-          regex: '^\d+\.\d+\.\d+\.\d+$'
-    teardown:
-      - run: kubectl delete service api-svc -n workloads --ignore-not-found
-      - run: kubectl delete deployment api -n workloads --ignore-not-found
-    hints: |
-      kubectl expose deployment api -n workloads --name=api-svc --port=80 --target-port=8080
-      kubectl get endpoints api-svc -n workloads
-
-  - id: YNET02
+  - id: Q34
     domain: Services and Networking (20%)
     topic: Demonstrate basic understanding of NetworkPolicies
     scenario: |
-      In namespace 'workloads', a Pod 'db' (label role=db) must only accept
-      ingress traffic from Pods labeled role=client. All other ingress should
-      be denied.
+      Restrict network traffic for 'processor' in namespace 'default'.
     tasks: |
-      1. Create a NetworkPolicy 'db-allow-clients' in namespace 'workloads'.
-      2. It should select Pods with label role=db.
-      3. It should allow ingress only from Pods with label role=client.
-      4. Confirm the policy is in place and selects the 'db' Pod.
+      1. Create a default-deny NetworkPolicy 'default-deny' in namespace 'default' that blocks all ingress and egress
+      2. Create an allow NetworkPolicy 'processor-allow' that allows ingress to Pods with label app=processor only from Pods with label app=frontend in the same namespace
+      3. Allow egress from 'processor' Pods to TCP port 3306 on CIDR 10.0.0.0/8 only
+      4. Test connectivity from allowed and denied sources using debug Pods
+      5. Verify allowed traffic succeeds and denied traffic times out
     setup:
-      - name: ensure workloads namespace exists
-        run: kubectl create namespace workloads --dry-run=client -o yaml | kubectl apply -f -
-      - name: seed the 'db' Pod
-        apply: |
-          apiVersion: v1
-          kind: Pod
-          metadata:
-            name: db
-            namespace: workloads
-            labels:
-              role: db
-          spec:
-            containers:
-              - name: db
-                image: nginx:1.27-alpine
+      - name: ensure default namespace exists
+        run: kubectl create namespace default --dry-run=client -o yaml | kubectl apply -f -
     verify:
-      - name: NetworkPolicy exists
-        run: kubectl get networkpolicy db-allow-clients -n workloads -o name
+      - name: NetworkPolicy default-deny exists
+        run: kubectl get networkpolicy default-deny -n default -o name
         expect:
-          equals: networkpolicy.networking.k8s.io/db-allow-clients
-      - name: podSelector matches role=db
-        run: kubectl get networkpolicy db-allow-clients -n workloads -o jsonpath='{.spec.podSelector.matchLabels.role}'
+          contains: networkpolicy.networking.k8s.io/default-deny
+      - name: NetworkPolicy processor-allow exists
+        run: kubectl get networkpolicy processor-allow -n default -o name
         expect:
-          equals: db
-      - name: ingress rule allows role=client
-        run: kubectl get networkpolicy db-allow-clients -n workloads -o jsonpath='{.spec.ingress[*].from[*].podSelector.matchLabels.role}'
+          contains: networkpolicy.networking.k8s.io/processor-allow
+      - name: processor-allow controls both ingress and egress
+        run: kubectl get networkpolicy processor-allow -n default -o jsonpath='{.spec.policyTypes}'
         expect:
-          contains: client
-      - name: policy is namespaced to 'workloads'
-        run: kubectl get networkpolicy db-allow-clients -n workloads -o jsonpath='{.metadata.namespace}'
-        expect:
-          equals: workloads
-      - name: policy does NOT allow all pods (empty podSelector)
-        run: kubectl get networkpolicy db-allow-clients -n workloads -o jsonpath='{.spec.ingress[*].from[*].podSelector}'
-        expect:
-          not_contains: "{}"
+          contains: Egress
     teardown:
-      - run: kubectl delete networkpolicy db-allow-clients -n workloads --ignore-not-found
-      - run: kubectl delete pod db -n workloads --ignore-not-found
+      - run: kubectl delete networkpolicy default-deny processor-allow -n default --ignore-not-found
     hints: |
-      A NetworkPolicy needs:
-        spec.podSelector.matchLabels.role: db
-        spec.policyTypes: [Ingress]
-        spec.ingress[0].from[0].podSelector.matchLabels.role: client
+      Default deny: empty ingress/egress rules with policyTypes. Always specify both policyTypes if you want to control both directions.
 
-  - id: YNET03
+  - id: Q35
     domain: Services and Networking (20%)
-    topic: Demonstrate basic understanding of Ingress
+    topic: Demonstrate basic understanding of NetworkPolicies
     scenario: |
-      A Service 'web-svc' in namespace 'workloads' fronts a small web app on
-      port 80. Expose it externally with an Ingress so that requests to
-      host 'demo.local' on path '/' are routed to that Service.
+      Allow cross-namespace communication for 'processor' between 'default' and 'ckad-practice'. The CNI on the cluster must enforce NetworkPolicies (e.g. Calico, Cilium); the in-tree kindnet does NOT.
     tasks: |
-      1. Create an Ingress named 'web-ingress' in namespace 'workloads'.
-      2. Host: 'demo.local', path '/' (Prefix), pointing to Service
-         'web-svc' on port 80.
-      3. Confirm the Ingress object is created and references the right
-         backend Service.
+      1. In namespace 'default', create a Pod 'processor-backend' (image 'nginx:alpine') labelled app=processor-backend, exposed by Service 'processor-backend' on port 80
+      2. Label namespace 'ckad-practice' with kubernetes.io/metadata.name=ckad-practice (it's set automatically on modern clusters)
+      3. In namespace 'ckad-practice', create a Pod 'processor-frontend' (image 'busybox:1.36', sleeps) labelled app=processor-frontend
+      4. Create a NetworkPolicy 'allow-from-ckad-practice' in 'default' that allows ingress to Pods with label app=processor-backend from any Pod in namespace 'ckad-practice'
+      5. Test connectivity from the frontend Pod to the backend Service and verify it succeeds; verify Pods from other namespaces cannot reach the backend
     setup:
-      - name: ensure workloads namespace exists
-        run: kubectl create namespace workloads --dry-run=client -o yaml | kubectl apply -f -
-      - name: seed the backend Deployment and Service
-        apply: |
-          apiVersion: apps/v1
-          kind: Deployment
-          metadata:
-            name: web
-            namespace: workloads
-          spec:
-            replicas: 1
-            selector:
-              matchLabels:
-                app: web
-            template:
-              metadata:
-                labels:
-                  app: web
-              spec:
-                containers:
-                  - name: web
-                    image: nginx:1.27-alpine
-                    ports:
-                      - containerPort: 80
-          ---
-          apiVersion: v1
-          kind: Service
-          metadata:
-            name: web-svc
-            namespace: workloads
-          spec:
-            selector:
-              app: web
-            ports:
-              - port: 80
-                targetPort: 80
+      - name: ensure default namespace exists
+        run: kubectl create namespace default --dry-run=client -o yaml | kubectl apply -f -
+      - name: ensure ckad-practice namespace exists
+        run: kubectl create namespace ckad-practice --dry-run=client -o yaml | kubectl apply -f -
     verify:
-      - name: Ingress exists
-        run: kubectl get ingress web-ingress -n workloads -o name
+      - name: NetworkPolicy allow-from-ckad-practice exists
+        run: kubectl get networkpolicy allow-from-ckad-practice -n default -o name
         expect:
-          equals: ingress.networking.k8s.io/web-ingress
-      - name: Ingress host is demo.local
-        run: kubectl get ingress web-ingress -n workloads -o jsonpath='{.spec.rules[0].host}'
+          contains: networkpolicy.networking.k8s.io/allow-from-ckad-practice
+      - name: policy targets app=processor-backend pods
+        run: kubectl get networkpolicy allow-from-ckad-practice -n default -o jsonpath='{.spec.podSelector.matchLabels}'
         expect:
-          equals: demo.local
-      - name: Ingress path is '/'
-        run: kubectl get ingress web-ingress -n workloads -o jsonpath='{.spec.rules[0].http.paths[0].path}'
+          contains: processor-backend
+      - name: policy references the ckad-practice namespace
+        run: kubectl get networkpolicy allow-from-ckad-practice -n default -o jsonpath='{.spec.ingress[*].from[*].namespaceSelector.matchLabels}'
         expect:
-          equals: "/"
-      - name: Ingress pathType is Prefix
-        run: kubectl get ingress web-ingress -n workloads -o jsonpath='{.spec.rules[0].http.paths[0].pathType}'
-        expect:
-          equals: Prefix
-      - name: Ingress backend service is web-svc:80
-        run: kubectl get ingress web-ingress -n workloads -o jsonpath='{.spec.rules[0].http.paths[0].backend.service.name}:{.spec.rules[0].http.paths[0].backend.service.port.number}'
-        expect:
-          equals: "web-svc:80"
+          contains: ckad-practice
     teardown:
-      - run: kubectl delete ingress web-ingress -n workloads --ignore-not-found
-      - run: kubectl delete service web-svc -n workloads --ignore-not-found
-      - run: kubectl delete deployment web -n workloads --ignore-not-found
+      - run: kubectl delete networkpolicy allow-from-ckad-practice -n default --ignore-not-found
     hints: |
-      kubectl create ingress web-ingress -n workloads \
-        --rule="demo.local/*=web-svc:80"
+      Use `namespaceSelector` in NetworkPolicy to allow traffic from specific namespaces. The well-known label `kubernetes.io/metadata.name` matches the namespace's own name.
 
-  - id: YNET04
+  - id: Q36
     domain: Services and Networking (20%)
-    topic: Demonstrate basic understanding of Services
+    topic: Provide and troubleshoot access to applications via services
     scenario: |
-      You need to expose an existing Deployment 'reporter' in namespace
-      'workloads' on every node so external tooling can hit any node IP
-      on a fixed port.
+      Expose 'webapp' in namespace 'team-beta' using multiple Service types.
     tasks: |
-      1. Create a NodePort Service 'reporter-np' in namespace 'workloads'.
-      2. Selector: app=reporter. Port 80 -> targetPort 8080. NodePort 30080.
-      3. Confirm the Service is reachable on the assigned NodePort.
+      1. Create Deployment 'webapp' with 3 replicas, image 'nginx:alpine' and label app=webapp (container port 80)
+      2. Create ClusterIP Service 'webapp-internal' on port 5000, targetPort 80
+      3. Create NodePort Service 'webapp-nodeport' on port 5000, targetPort 80, nodePort 30080
+      4. Verify endpoints are populated for both Services
+      5. Test internal access from a debug Pod in the same namespace
+      6. Explain when to use ClusterIP vs NodePort vs LoadBalancer
     setup:
-      - name: ensure workloads namespace exists
-        run: kubectl create namespace workloads --dry-run=client -o yaml | kubectl apply -f -
-      - name: seed the 'reporter' Deployment
-        apply: |
-          apiVersion: apps/v1
-          kind: Deployment
-          metadata:
-            name: reporter
-            namespace: workloads
-          spec:
-            replicas: 1
-            selector:
-              matchLabels:
-                app: reporter
-            template:
-              metadata:
-                labels:
-                  app: reporter
-              spec:
-                containers:
-                  - name: reporter
-                    image: hashicorp/http-echo:1.0
-                    args: ["-listen=:8080", "-text=reporter-ok"]
-                    ports:
-                      - containerPort: 8080
-      - name: wait for the 'reporter' Deployment to be Available
-        run: kubectl wait --for=condition=Available deployment/reporter -n workloads --timeout=60s
+      - name: ensure team-beta namespace exists
+        run: kubectl create namespace team-beta --dry-run=client -o yaml | kubectl apply -f -
     verify:
-      - name: service type is NodePort
-        run: kubectl get service reporter-np -n workloads -o jsonpath='{.spec.type}'
+      - name: Deployment webapp exists
+        run: kubectl get deployment webapp -n team-beta -o name
         expect:
-          equals: NodePort
-      - name: nodePort is 30080
-        run: kubectl get service reporter-np -n workloads -o jsonpath='{.spec.ports[0].nodePort}'
+          contains: deployment.apps/webapp
+      - name: Deployment has 3 ready replicas
+        run: kubectl get deployment webapp -n team-beta -o jsonpath='{.status.readyReplicas}'
+        expect:
+          equals: "3"
+      - name: ClusterIP Service webapp-internal exists
+        run: kubectl get service webapp-internal -n team-beta -o jsonpath='{.spec.type}'
+        expect:
+          equals: ClusterIP
+      - name: NodePort Service webapp-nodeport listens on nodePort 30080
+        run: kubectl get service webapp-nodeport -n team-beta -o jsonpath='{.spec.ports[0].nodePort}'
         expect:
           equals: "30080"
-      - name: port 80 -> targetPort 8080
-        run: kubectl get service reporter-np -n workloads -o jsonpath='{.spec.ports[0].port}:{.spec.ports[0].targetPort}'
+      - name: endpoints webapp-internal are populated
+        run: kubectl get endpoints webapp-internal -n team-beta -o jsonpath='{.subsets[0].addresses[0].ip}'
         expect:
-          equals: "80:8080"
-      - name: service exists (kubectl get exits 0)
-        run: kubectl get service reporter-np -n workloads
-        expect:
-          exit_code: 0
+          regex: '^\d+\.\d+\.\d+\.\d+$'
     teardown:
-      - run: kubectl delete service reporter-np -n workloads --ignore-not-found
-      - run: kubectl delete deployment reporter -n workloads --ignore-not-found
+      - run: kubectl delete service webapp-internal webapp-nodeport -n team-beta --ignore-not-found
+      - run: kubectl delete deployment webapp -n team-beta --ignore-not-found
     hints: |
-      kubectl expose deployment reporter -n workloads \
-        --name=reporter-np \
-        --type=NodePort \
-        --port=80 --target-port=8080 \
-        --overrides='{"spec":{"ports":[{"port":80,"targetPort":8080,"nodePort":30080}]}}'
+      ClusterIP = internal only. NodePort = exposes on each node's IP. LoadBalancer = cloud provider external IP.
+
+  - id: Q37
+    domain: Services and Networking (20%)
+    topic: Provide and troubleshoot access to applications via services
+    scenario: |
+      Troubleshoot service discovery between 'processor' and 'cache' in namespace 'team-alpha'.
+    tasks: |
+      1. Create Deployment 'processor' (image 'nginx:alpine', label app=processor) and a matching ClusterIP Service 'processor' on port 80
+      2. Create Deployment 'cache' (image 'redis:7-alpine', label app=cache) and a matching ClusterIP Service 'cache' on port 6379
+      3. Verify DNS resolution works: from a debug Pod run `nslookup cache.team-alpha.svc.cluster.local`
+      4. Test connectivity with curl/wget between the two Services
+      5. Intentionally break the selector label on one Service and observe endpoints disappear
+      6. Fix the selector and verify endpoints return
+    setup:
+      - name: ensure team-alpha namespace exists
+        run: kubectl create namespace team-alpha --dry-run=client -o yaml | kubectl apply -f -
+    verify:
+      - name: Service processor exists
+        run: kubectl get service processor -n team-alpha -o name
+        expect:
+          contains: service/processor
+      - name: Service cache exists
+        run: kubectl get service cache -n team-alpha -o name
+        expect:
+          contains: service/cache
+      - name: endpoints processor are populated
+        run: kubectl get endpoints processor -n team-alpha -o jsonpath='{.subsets[0].addresses[0].ip}'
+        expect:
+          regex: '^\d+\.\d+\.\d+\.\d+$'
+      - name: endpoints cache are populated
+        run: kubectl get endpoints cache -n team-alpha -o jsonpath='{.subsets[0].addresses[0].ip}'
+        expect:
+          regex: '^\d+\.\d+\.\d+\.\d+$'
+    teardown:
+      - run: kubectl delete service processor cache -n team-alpha --ignore-not-found
+      - run: kubectl delete deployment processor cache -n team-alpha --ignore-not-found
+    hints: |
+      Service DNS: <service>.<namespace>.svc.cluster.local. Endpoints disappear if the selector doesn't match Pods.
+
+  - id: Q38
+    domain: Services and Networking (20%)
+    topic: Use Ingress rules to expose applications
+    scenario: |
+      Expose 'gateway' and 'processor' externally using Ingress in namespace 'staging'. Requires an Ingress controller running in the cluster.
+    tasks: |
+      1. Deploy 'gateway' (image 'nginx:alpine', label app=gateway) and 'processor' (image 'nginx:alpine', label app=processor), each fronted by a ClusterIP Service on port 80
+      2. Create an Ingress resource 'gateway-ingress' in namespace 'staging' routing host 'gateway.example.com' to the gateway service
+      3. Add a second rule in the same Ingress routing path '/processor' (Prefix) to the processor service
+      4. Verify the Ingress has the expected rules with `kubectl describe ingress`
+      5. Test with curl using the host header: `curl -H "Host: gateway.example.com" http://<ingress-ip>/`
+      6. (Optional advanced) Add TLS configuration with a self-signed certificate
+    setup:
+      - name: ensure staging namespace exists
+        run: kubectl create namespace staging --dry-run=client -o yaml | kubectl apply -f -
+    verify:
+      - name: Ingress gateway-ingress exists
+        run: kubectl get ingress gateway-ingress -n staging -o name
+        expect:
+          contains: ingress.networking.k8s.io/gateway-ingress
+      - name: Ingress routes host gateway.example.com
+        run: kubectl get ingress gateway-ingress -n staging -o jsonpath='{.spec.rules[*].host}'
+        expect:
+          contains: gateway.example.com
+      - name: Ingress backend points to gateway service
+        run: kubectl get ingress gateway-ingress -n staging -o jsonpath='{.spec.rules[*].http.paths[*].backend.service.name}'
+        expect:
+          contains: gateway
+    teardown:
+      - run: kubectl delete ingress gateway-ingress -n staging --ignore-not-found
+    hints: |
+      Ingress needs an Ingress controller (e.g., NGINX Ingress). For kind, install with `kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml`.

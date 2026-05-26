@@ -1,0 +1,346 @@
+# Application Environment, Configuration and Security drills.
+#
+# Exercises the YAML bank format across a range of expectation kinds:
+# - equals      : exact stdout match
+# - contains    : substring match
+# - not_contains: substring must be absent
+# - regex       : python regex match
+# - exit_code   : explicit exit-code expectation
+#
+# All drills target well-known namespaces which the runtime rewrites to
+# whatever you pass via --namespace.
+
+questions:
+  - id: Q25
+    domain: Application Environment, Configuration and Security (25%)
+    topic: Discover and use resources that extend Kubernetes (CRD, Operators)
+    scenario: |
+      Define and use a simple Custom Resource Definition in namespace 'prod'.
+    tasks: |
+      1. List the CRDs already present on the cluster with 'kubectl get crds'
+      2. Apply the included CRD manifest (a 'Widget' resource under group ckad.example.com/v1)
+      3. Create a custom resource of that kind named 'sample-widget' in namespace 'prod'
+      4. Inspect the CRD's defined schema with 'kubectl get crd widgets.ckad.example.com -o yaml'
+      5. Explain how Operators use CRDs to manage complex applications
+    setup:
+      - name: ensure prod namespace exists
+        run: kubectl create namespace prod --dry-run=client -o yaml | kubectl apply -f -
+      - name: install the Widget CRD so the drill is self-contained
+        apply: |
+          apiVersion: apiextensions.k8s.io/v1
+          kind: CustomResourceDefinition
+          metadata:
+            name: widgets.ckad.example.com
+          spec:
+            group: ckad.example.com
+            scope: Namespaced
+            names:
+              plural: widgets
+              singular: widget
+              kind: Widget
+              shortNames:
+                - wdg
+            versions:
+              - name: v1
+                served: true
+                storage: true
+                schema:
+                  openAPIV3Schema:
+                    type: object
+                    properties:
+                      spec:
+                        type: object
+                        properties:
+                          size:
+                            type: string
+    verify:
+      - name: Widget CRD is established
+        run: kubectl get crd widgets.ckad.example.com -o jsonpath='{.status.conditions[?(@.type=="Established")].status}'
+        expect:
+          equals: "True"
+      - name: sample-widget custom resource exists in prod
+        run: kubectl get widget sample-widget -n prod -o name
+        expect:
+          contains: widget.ckad.example.com/sample-widget
+    teardown:
+      - run: kubectl delete widget sample-widget -n prod --ignore-not-found
+      - run: kubectl delete crd widgets.ckad.example.com --ignore-not-found
+    hints: |
+      CRDs extend the Kubernetes API. Operators use CRDs to manage complex applications. Use `kubectl explain widget` after the CRD is established.
+
+  - id: Q26
+    domain: Application Environment, Configuration and Security (25%)
+    topic: Understand authentication, authorization, and admission control
+    scenario: |
+      Set up RBAC for 'proxy' in namespace 'ckad-practice' with fine-grained permissions.
+    tasks: |
+      1. Create a Role 'proxy-role' in namespace 'ckad-practice' allowing get/list/watch on Pods and Services only
+      2. Create a RoleBinding 'proxy-binding' associating the Role with user 'developer'
+      3. Verify 'kubectl auth can-i get pods --as=developer -n ckad-practice' returns 'yes'
+      4. Verify 'kubectl auth can-i delete pods --as=developer -n ckad-practice' returns 'no'
+      5. Create a ClusterRole for reading nodes, bind it to group 'devops'
+      6. Explain the difference between Role (namespace-scoped) and ClusterRole (cluster-scoped)
+    setup:
+      - name: ensure ckad-practice namespace exists
+        run: kubectl create namespace ckad-practice --dry-run=client -o yaml | kubectl apply -f -
+    verify:
+      - name: Role proxy-role exists
+        run: kubectl get role proxy-role -n ckad-practice -o name
+        expect:
+          contains: role.rbac.authorization.k8s.io/proxy-role
+      - name: RoleBinding proxy-binding exists
+        run: kubectl get rolebinding proxy-binding -n ckad-practice -o name
+        expect:
+          contains: rolebinding.rbac.authorization.k8s.io/proxy-binding
+      - name: "RBAC: developer CAN get pods (allowed)"
+        run: kubectl auth can-i get pods --as=developer -n ckad-practice
+        expect:
+          equals: "yes"
+      - name: "RBAC: developer CANNOT delete pods (denied)"
+        run: kubectl auth can-i delete pods --as=developer -n ckad-practice 2>/dev/null; true
+        expect:
+          contains: "no"
+    teardown:
+      - run: kubectl delete rolebinding proxy-binding -n ckad-practice --ignore-not-found
+      - run: kubectl delete role proxy-role -n ckad-practice --ignore-not-found
+    hints: |
+      Role is namespace-scoped. ClusterRole is cluster-wide. Use RoleBinding for Role, ClusterRoleBinding for ClusterRole.
+      `kubectl auth can-i` exits 0 for "yes" and 1 for "no" — the trailing `; true` keeps the pipeline exit code 0 so the `contains` check sees stdout.
+
+  - id: Q27
+    domain: Application Environment, Configuration and Security (25%)
+    topic: Understand requests, limits, quotas
+    scenario: |
+      Enforce resource constraints for namespace 'team-alpha'.
+    tasks: |
+      1. Create a ResourceQuota 'cache-quota' in namespace 'team-alpha' with:
+         - requests.cpu=2, requests.memory=4Gi
+         - limits.cpu=4, limits.memory=8Gi
+         - pods=10, services=5
+      2. Create a LimitRange 'cache-limits' in namespace 'team-alpha' with:
+         - default CPU limit=500m, default memory limit=512Mi
+         - default request CPU=100m, default request memory=128Mi
+      3. Create a Deployment that exceeds the quota and observe the failure
+      4. Adjust the Deployment to fit within quota and verify it runs
+    setup:
+      - name: ensure team-alpha namespace exists
+        run: kubectl create namespace team-alpha --dry-run=client -o yaml | kubectl apply -f -
+    verify:
+      - name: ResourceQuota cache-quota exists
+        run: kubectl get resourcequota cache-quota -n team-alpha -o name
+        expect:
+          contains: resourcequota/cache-quota
+      - name: ResourceQuota caps pods at 10
+        run: kubectl get resourcequota cache-quota -n team-alpha -o jsonpath='{.spec.hard.pods}'
+        expect:
+          equals: "10"
+      - name: LimitRange cache-limits exists
+        run: kubectl get limitrange cache-limits -n team-alpha -o name
+        expect:
+          contains: limitrange/cache-limits
+    teardown:
+      - run: kubectl delete resourcequota cache-quota -n team-alpha --ignore-not-found
+      - run: kubectl delete limitrange cache-limits -n team-alpha --ignore-not-found
+    hints: |
+      ResourceQuota limits total resources in a namespace. LimitRange sets defaults for containers.
+
+  - id: Q28
+    domain: Application Environment, Configuration and Security (25%)
+    topic: Understand ConfigMaps
+    scenario: |
+      Configure 'webapp' in namespace 'prod' using ConfigMaps in multiple ways.
+    tasks: |
+      1. Create ConfigMap 'webapp-config' from literal values: APP_NAME=webapp, LOG_LEVEL=debug, PORT=6379
+      2. Create a second ConfigMap 'webapp-files' from a file (create a local file 'settings.conf' with key=value data first)
+      3. Create a Pod 'webapp-cm' that consumes 'webapp-config' as environment variables
+      4. Mount 'webapp-files' as a volume at /etc/config in the same Pod
+      5. Verify env vars and mounted files from inside the container
+      6. Update the ConfigMap and observe if changes reflect in the Pod (env vars don't update, mounted files do)
+    setup:
+      - name: ensure prod namespace exists
+        run: kubectl create namespace prod --dry-run=client -o yaml | kubectl apply -f -
+    verify:
+      - name: ConfigMap webapp-config exists
+        run: kubectl get configmap webapp-config -n prod -o name
+        expect:
+          contains: configmap/webapp-config
+      - name: APP_NAME literal stored in ConfigMap
+        run: kubectl get configmap webapp-config -n prod -o jsonpath='{.data.APP_NAME}'
+        expect:
+          equals: webapp
+      - name: ConfigMap webapp-files exists
+        run: kubectl get configmap webapp-files -n prod -o name
+        expect:
+          contains: configmap/webapp-files
+    teardown:
+      - run: kubectl delete configmap webapp-config webapp-files -n prod --ignore-not-found
+      - run: kubectl delete pod webapp-cm -n prod --ignore-not-found --wait=false
+    hints: |
+      ConfigMap as env: updates require Pod restart. ConfigMap as volume: updates reflect automatically (after kubelet sync period).
+
+  - id: Q29
+    domain: Application Environment, Configuration and Security (25%)
+    topic: Define resource requirements
+    scenario: |
+      Properly size 'notifier' in namespace 'team-beta' with CPU and memory constraints.
+    tasks: |
+      1. Create Deployment 'notifier' with image 'nginx:alpine', 2 replicas
+      2. Set resource requests: CPU=200m, memory=128Mi
+      3. Set resource limits: CPU=500m, memory=512Mi
+      4. Verify resources are set with 'kubectl describe pod'
+      5. Check if the Pod is assigned to a node with sufficient resources
+      6. Explain the difference between requests (scheduling) and limits (runtime enforcement)
+    setup:
+      - name: ensure team-beta namespace exists
+        run: kubectl create namespace team-beta --dry-run=client -o yaml | kubectl apply -f -
+    verify:
+      - name: Deployment notifier exists
+        run: kubectl get deployment notifier -n team-beta -o name
+        expect:
+          contains: deployment.apps/notifier
+      - name: Deployment has 2 ready replicas
+        run: kubectl get deployment notifier -n team-beta -o jsonpath='{.status.readyReplicas}'
+        expect:
+          equals: "2"
+      - name: container has CPU request set
+        run: kubectl get deployment notifier -n team-beta -o jsonpath='{.spec.template.spec.containers[0].resources.requests.cpu}'
+        expect:
+          regex: '^\d+m?$'
+      - name: container has memory limit set
+        run: kubectl get deployment notifier -n team-beta -o jsonpath='{.spec.template.spec.containers[0].resources.limits.memory}'
+        expect:
+          regex: '^\d+(Mi|Gi)$'
+    teardown:
+      - run: kubectl delete deployment notifier -n team-beta --ignore-not-found
+    hints: |
+      Requests are used by scheduler. Limits are enforced by kubelet/Cgroups. Always set both.
+
+  - id: Q30
+    domain: Application Environment, Configuration and Security (25%)
+    topic: Create & consume Secrets
+    scenario: |
+      Securely manage sensitive data for 'cache' in namespace 'team-alpha'.
+    tasks: |
+      1. Create Secret 'cache-secrets' in namespace 'team-alpha' with keys: TLS_CERT, API_KEY, AUTH_TOKEN (use generic type with --from-literal)
+      2. Create a Pod that consumes the Secret as environment variables
+      3. Create a second Pod that mounts the Secret as files in /etc/secrets
+      4. Verify env vars don't show values in 'kubectl describe pod' (only reference the Secret)
+      5. Verify files in /etc/secrets contain the decoded values
+      6. Create a TLS Secret from certificate files (simulate with self-signed cert if needed)
+    setup:
+      - name: ensure team-alpha namespace exists
+        run: kubectl create namespace team-alpha --dry-run=client -o yaml | kubectl apply -f -
+    verify:
+      - name: Secret cache-secrets exists
+        run: kubectl get secret cache-secrets -n team-alpha -o name
+        expect:
+          contains: secret/cache-secrets
+      - name: Secret holds the expected keys
+        run: kubectl get secret cache-secrets -n team-alpha -o jsonpath='{.data}'
+        expect:
+          contains: API_KEY
+      - name: Secret is of type Opaque (generic)
+        run: kubectl get secret cache-secrets -n team-alpha -o jsonpath='{.type}'
+        expect:
+          equals: Opaque
+    teardown:
+      - run: kubectl delete secret cache-secrets -n team-alpha --ignore-not-found
+    hints: |
+      Secrets are base64-encoded in etcd. Mounted as files = decoded automatically. As env vars = available decoded in container.
+
+  - id: Q31
+    domain: Application Environment, Configuration and Security (25%)
+    topic: Understand ServiceAccounts
+    scenario: |
+      Configure a dedicated ServiceAccount for 'notifier' in namespace 'team-alpha'.
+    tasks: |
+      1. Create ServiceAccount 'notifier-sa' in namespace 'team-alpha'
+      2. Create a Role 'notifier-cm-reader' allowing get/list on ConfigMaps in 'team-alpha'
+      3. Create a RoleBinding 'notifier-cm-binding' binding 'notifier-sa' to the Role
+      4. Create a Pod that uses 'notifier-sa' as its serviceAccountName
+      5. From inside the Pod, attempt to list ConfigMaps (should succeed) and Pods (should fail)
+      6. View the auto-mounted token at /var/run/secrets/kubernetes.io/serviceaccount/token
+    setup:
+      - name: ensure team-alpha namespace exists
+        run: kubectl create namespace team-alpha --dry-run=client -o yaml | kubectl apply -f -
+    verify:
+      - name: ServiceAccount notifier-sa exists
+        run: kubectl get serviceaccount notifier-sa -n team-alpha -o name
+        expect:
+          contains: serviceaccount/notifier-sa
+      - name: "RBAC: notifier-sa CAN get configmaps (allowed)"
+        run: kubectl auth can-i get configmaps --as=system:serviceaccount:team-alpha:notifier-sa -n team-alpha
+        expect:
+          equals: "yes"
+      - name: "RBAC: notifier-sa CANNOT get pods (denied)"
+        run: kubectl auth can-i get pods --as=system:serviceaccount:team-alpha:notifier-sa -n team-alpha 2>/dev/null; true
+        expect:
+          contains: "no"
+    teardown:
+      - run: kubectl delete rolebinding notifier-cm-binding -n team-alpha --ignore-not-found
+      - run: kubectl delete role notifier-cm-reader -n team-alpha --ignore-not-found
+      - run: kubectl delete serviceaccount notifier-sa -n team-alpha --ignore-not-found
+    hints: |
+      Default ServiceAccount has minimal permissions. Custom ServiceAccounts need explicit RoleBindings.
+      `kubectl auth can-i` exits 1 for "no"; the `; true` keeps the pipeline exit code 0 so the `contains` check sees stdout.
+
+  - id: Q32
+    domain: Application Environment, Configuration and Security (25%)
+    topic: Understand Application Security (SecurityContexts, Capabilities, etc.)
+    scenario: |
+      Harden 'cache' in namespace 'ckad-practice' with comprehensive security settings.
+    tasks: |
+      1. Create Pod 'cache-secure' in namespace 'ckad-practice' with image 'python:3.11-slim'
+      2. Set pod-level SecurityContext: runAsNonRoot=true, runAsUser=1000, seccompProfile type=RuntimeDefault
+      3. Set container-level SecurityContext: readOnlyRootFilesystem=true, allowPrivilegeEscalation=false, capabilities drop=['ALL']
+      4. Add capabilities add=['NET_BIND_SERVICE'] if the app needs to bind to privileged ports
+      5. Verify the container runs as a non-root user
+      6. Verify the root filesystem is read-only and the container cannot write to /
+    setup:
+      - name: ensure ckad-practice namespace exists
+        run: kubectl create namespace ckad-practice --dry-run=client -o yaml | kubectl apply -f -
+    verify:
+      - name: pod runs as non-root
+        run: kubectl get pod cache-secure -n ckad-practice -o jsonpath='{.spec.securityContext.runAsNonRoot}'
+        expect:
+          equals: "true"
+      - name: container has readOnlyRootFilesystem
+        run: kubectl get pod cache-secure -n ckad-practice -o jsonpath='{.spec.containers[0].securityContext.readOnlyRootFilesystem}'
+        expect:
+          equals: "true"
+      - name: container drops ALL capabilities
+        run: kubectl get pod cache-secure -n ckad-practice -o jsonpath='{.spec.containers[0].securityContext.capabilities.drop[*]}'
+        expect:
+          contains: ALL
+    teardown:
+      - run: kubectl delete pod cache-secure -n ckad-practice --ignore-not-found --wait=false
+    hints: |
+      SecurityContext at pod level affects all containers. Container level overrides pod level. Drop ALL capabilities, then add only what's needed.
+
+  - id: Q33
+    domain: Application Environment, Configuration and Security (25%)
+    topic: Understand Application Security (SecurityContexts, Capabilities, etc.)
+    scenario: |
+      Run 'processor' as a specific user with restricted permissions in namespace 'team-beta'.
+    tasks: |
+      1. Create Pod 'processor-restricted' in namespace 'team-beta' with image 'nginx:alpine'
+      2. Set runAsUser=1000, runAsGroup=1000, fsGroup=1000 at pod level
+      3. Verify the nginx process runs as UID 1000 inside the container
+      4. Mount an emptyDir volume and verify files are created with group ownership 1000
+      5. Add runAsNonRoot=true and verify the Pod fails if the image tries to run as root
+    setup:
+      - name: ensure team-beta namespace exists
+        run: kubectl create namespace team-beta --dry-run=client -o yaml | kubectl apply -f -
+    verify:
+      - name: pod has runAsUser=1000
+        run: kubectl get pod processor-restricted -n team-beta -o jsonpath='{.spec.securityContext.runAsUser}'
+        expect:
+          equals: "1000"
+      - name: pod has fsGroup=1000
+        run: kubectl get pod processor-restricted -n team-beta -o jsonpath='{.spec.securityContext.fsGroup}'
+        expect:
+          equals: "1000"
+    teardown:
+      - run: kubectl delete pod processor-restricted -n team-beta --ignore-not-found --wait=false
+    hints: |
+      fsGroup sets ownership for volumes. runAsUser overrides the image's default user.

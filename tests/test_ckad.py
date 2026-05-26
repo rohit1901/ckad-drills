@@ -55,6 +55,9 @@ load_yaml_questions = _yaml_datasets.load_yaml_questions
 FIXTURE_PATH = TESTS_ROOT / "fixtures" / "sample_questions.csv"
 EXTRA_BANK_FIXTURE = TESTS_ROOT / "fixtures" / "sample_questions_extra.csv"
 SAMPLE_EXAM_BLUEPRINT_FIXTURE = TESTS_ROOT / "fixtures" / "sample_exam_blueprint.csv"
+SAMPLE_EXAM_BLUEPRINT_YAML_FIXTURE = (
+    TESTS_ROOT / "fixtures" / "sample_exam_blueprint.yaml"
+)
 INVALID_EXAM_BLUEPRINT_FIXTURE = (
     TESTS_ROOT / "fixtures" / "invalid_exam_blueprint_unknown_id.csv"
 )
@@ -220,12 +223,9 @@ class TestSession(unittest.TestCase):
     def test_load_configured_question_bank_includes_extensions(self):
         with (
             patch.object(
-                _session, "resolve_base_question_bank_path", return_value=FIXTURE_PATH
-            ),
-            patch.object(
                 _session,
                 "resolve_question_bank_extension_paths",
-                return_value=[EXTRA_BANK_FIXTURE],
+                return_value=[FIXTURE_PATH, EXTRA_BANK_FIXTURE],
             ),
             patch.object(
                 _session,
@@ -257,18 +257,13 @@ class TestSession(unittest.TestCase):
         with (
             patch.object(
                 _session,
-                "load_base_question_bank",
-                return_value=load_question_bank([FIXTURE_PATH]),
-            ),
-            patch.object(
-                _session,
                 "load_configured_question_bank",
                 return_value=load_question_bank([FIXTURE_PATH, EXTRA_BANK_FIXTURE]),
             ),
             patch.object(
                 _session,
                 "resolve_exam_blueprint_path",
-                return_value=SAMPLE_EXAM_BLUEPRINT_FIXTURE,
+                return_value=SAMPLE_EXAM_BLUEPRINT_YAML_FIXTURE,
             ),
         ):
             drills = prepare_drills("exam", 2, "drill-01", seed=7)
