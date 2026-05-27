@@ -69,8 +69,29 @@ useful. All are free; none require an account.
 | `kubectl` | talks to that cluster; also runs verify checks | [kubectl install guide](https://kubernetes.io/docs/tasks/tools/)                         |
 
 You do **not** need a remote/cloud cluster. The repo ships its own
-`kind-config.yaml` and the setup script builds a 1-control-plane +
-2-worker cluster locally.
+[`kind-config.yaml`](./kind-config.yaml) and the setup script uses it
+to build the cluster locally:
+
+```yaml
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+- role: control-plane
+- role: worker
+- role: worker
+```
+
+That gives you a 1 control-plane + 2 worker topology, which is enough
+for every drill in the bank (Services / Networking drills want at
+least two workers so a Service has somewhere to schedule replicas).
+If you want a different shape — a single-node cluster, an extra
+worker, port mappings, an image-registry sidecar — edit
+`kind-config.yaml` before `make kind-up`, or point at a different
+file:
+
+```bash
+make kind-up KIND_CONFIG=./my-kind-config.yaml
+```
 
 Quick sanity check before continuing:
 
@@ -93,8 +114,9 @@ make install
 
 # 2. Bring up the local kind cluster (named 'ckad-practice' by default).
 #    Runs scripts/kind-setup.sh which preflights docker/kind/kubectl,
-#    creates the cluster from kind-config.yaml, switches your kubectl
-#    context to 'kind-ckad-practice', and waits for nodes to be Ready.
+#    creates the cluster from the bundled kind-config.yaml (1 control
+#    plane + 2 workers), switches your kubectl context to
+#    'kind-ckad-practice', and waits for nodes to be Ready.
 #    Skips creation if the cluster already exists.
 make kind-up
 
