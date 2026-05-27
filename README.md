@@ -56,27 +56,88 @@ PERCENTAGE: 77%
 RESULT: 🎉 PASSING SCORE!
 ```
 
-## Quick start
+## Prerequisites
+
+You need four things on your `PATH` before the tool can do anything
+useful. All are free; none require an account.
+
+| Tool      | Why                                            | Install                                                                                  |
+| --------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Python    | runs the CLI itself (3.10 or newer)            | [python.org](https://www.python.org/downloads/) or your OS package manager               |
+| Docker    | hosts the local Kubernetes cluster             | [Docker Desktop](https://docs.docker.com/get-docker/) (macOS/Windows) or Docker Engine   |
+| `kind`    | spins up a kind cluster in Docker              | [kind quick-start](https://kind.sigs.k8s.io/docs/user/quick-start/#installation)         |
+| `kubectl` | talks to that cluster; also runs verify checks | [kubectl install guide](https://kubernetes.io/docs/tasks/tools/)                         |
+
+You do **not** need a remote/cloud cluster. The repo ships its own
+`kind-config.yaml` and the setup script builds a 1-control-plane +
+2-worker cluster locally.
+
+Quick sanity check before continuing:
 
 ```bash
-# Prerequisites: Python 3.10+, Docker, kind, kubectl on PATH
-
-make install        # editable install into .venv
-make kind-up        # bring up the local cluster
-make exam           # 22 questions, 2h, real CKAD shape
-
-# When you're done:
-make cleanup        # delete namespace + kind cluster
+docker info >/dev/null && kind version && kubectl version --client && python3 --version
 ```
 
-Run a shorter practice session instead of the full exam:
+If any of those error out, fix that one first — every later step
+assumes them.
+
+## First-time setup
+
+From the repo root, run these three commands in order. They're
+idempotent, so re-running any of them is safe.
 
 ```bash
+# 1. Install the Python package into a local .venv (editable install).
+#    Creates .venv/ on the first run; later runs just refresh deps.
+make install
+
+# 2. Bring up the local kind cluster (named 'ckad-practice' by default).
+#    Runs scripts/kind-setup.sh which preflights docker/kind/kubectl,
+#    creates the cluster from kind-config.yaml, switches your kubectl
+#    context to 'kind-ckad-practice', and waits for nodes to be Ready.
+#    Skips creation if the cluster already exists.
+make kind-up
+
+# 3. (Optional) Confirm the cluster is healthy.
+kubectl get nodes
+```
+
+At this point you have a working cluster and the `ckad-drills` CLI is
+on `PATH` inside `.venv` (or run it directly as
+`.venv/bin/ckad-drills`).
+
+## Your first exam
+
+```bash
+make exam
+```
+
+That starts a full CKAD-shaped session: **22 questions / 2-hour
+timer**, drawn from the YAML banks via the balanced blueprint. You'll
+see each drill's scenario and tasks; the verify commands and grading
+stay hidden until you press <kbd>Enter</kbd> (or the timer expires).
+
+Prefer a shorter warm-up?
+
+```bash
+# 5 randomized questions, no timer, against namespace drill-01
 .venv/bin/ckad-drills run --mode drills --count 5 --namespace drill-01
 ```
 
-On macOS you can double-click `start_ckad_exam.command` to get the same
-exam-mode launch without touching the terminal.
+On macOS, double-clicking `start_ckad_exam.command` does the
+`install + kind-up + exam` chain in one shot from Finder.
+
+## Cleaning up
+
+When you're done practicing:
+
+```bash
+make cleanup        # delete practice namespace + kind cluster
+```
+
+If you want finer control — e.g. keep the cluster but wipe the
+resources you created — see the [Cleanup tiers](#cleanup-tiers)
+section below.
 
 ## CLI reference
 
