@@ -1,370 +1,212 @@
-# CKAD Drills
+# ⎈ CKAD Drills
 
-A local CLI tool for generating CKAD-style Kubernetes drills from CSV question banks, running an interactive practice session, and grading your work against `kubectl` verification commands.
+> A local, offline CKAD practice rig. Spins up a kind cluster, hands you a
+> randomized exam, grades it against real `kubectl` output, and tears
+> everything down when you're done.
 
-## How to use the CKAD tests
+## Why this exists
 
-### Prerequisites
-- Python 3.10+
-- [Docker](https://docs.docker.com/get-docker/) running locally
-- [`kind`](https://kind.sigs.k8s.io/docs/user/quick-start/#installation) for spinning up the local cluster
-- [`kubectl`](https://kubernetes.io/docs/tasks/tools/) on your `PATH`
+I sat the CKAD with the usual mix of resources — killer.sh, YouTube
+walkthroughs, the official curriculum PDF — and kept running into the
+same friction:
 
-You do not need a pre-existing remote cluster. The repo ships a `kind-config.yaml` and helper scripts that build a local 1 control-plane + 2 worker cluster for you.
+- killer.sh sessions are time-boxed and you only get two; you can't
+  iterate on a topic until it sticks.
+- "practice" repos on GitHub are mostly question lists. You still have
+  to set up the cluster, eyeball whether your answer is correct, and
+  reset state by hand between attempts.
+- Cloud playgrounds cost money and pull you online when the actual
+  exam environment is just a terminal and `kubectl`.
 
-### Set up the local kind cluster
-Before running any drills, bring up the local Kubernetes cluster:
+What I actually wanted was something I could run from my laptop, that
+would behave like the real exam: a kind cluster on localhost, a fixed
+time limit, randomized but domain-balanced questions, a verifier that
+actually runs commands against the cluster instead of trusting me to
+self-grade, and a one-keypress teardown so I could re-run the whole
+thing fifty times in a weekend without leaving stale namespaces behind.
 
-- `make kind-up`
+So I built it. This tool is the daily-driver I used to pass the exam,
+hardened into something other people can pick up.
 
-This runs `scripts/kind-setup.sh`, which:
-- verifies `docker`, `kind`, and `kubectl` are installed and on your `PATH`
-- verifies the Docker daemon is reachable
-- creates a kind cluster named `ckad-practice` from `kind-config.yaml` (skips creation if it already exists)
-- switches your `kubectl` context to `kind-ckad-practice`
-- waits for all nodes to become `Ready`
+## What it does
 
-If any preflight check fails, the script exits with a clear error message and a hint telling you what to fix (missing tool, Docker not running, missing config file, cluster unhealthy, etc.).
+- **Spins up a local cluster** (`make kind-up`) — 1 control plane + 2
+  workers via `kind`, no cloud account needed.
+- **Generates a balanced exam** — 22 questions / 2h by default, drawn
+  from a YAML question bank using a blueprint that mirrors the
+  published CKAD domain weights (20 / 20 / 15 / 25 / 20).
+- **Grades against the live cluster** — each question carries
+  declarative `verify` checks (`equals` / `contains` / `regex` /
+  `exit_code`) that run as real `kubectl` commands.
+- **Times you like the real thing** — countdown banner, periodic
+  remaining-time reminders, auto-grade when the clock runs out.
+- **Cleans up after itself** — opt-in tiered cleanup, from "delete the
+  objects I created" all the way to "wipe the kind cluster".
 
-You can override the defaults:
+```
+$ ckad-drills run --mode exam
+========================================================================
+EXAM TIMER STARTED
+========================================================================
+⏱  Timer is running. Total: 2h.
+   Reminders will print at 1h / 30m / 10m / 5m remaining.
+...
+SCORE: 17 / 22
+PERCENTAGE: 77%
+RESULT: 🎉 PASSING SCORE!
+```
 
-- `make kind-up KIND_CLUSTER_NAME=my-cluster KIND_CONFIG=./kind-config.yaml`
-- `./scripts/kind-setup.sh my-cluster ./kind-config.yaml`
+## Quick start
 
-### Tear down the local kind cluster
-When you are done practicing, remove the local cluster and its `kubectl` context:
+```bash
+# Prerequisites: Python 3.10+, Docker, kind, kubectl on PATH
 
-- `make kind-down`
+make install        # editable install into .venv
+make kind-up        # bring up the local cluster
+make exam           # 22 questions, 2h, real CKAD shape
 
-This runs `scripts/kind-cleanup.sh`, which:
-- deletes the named kind cluster (if it exists)
-- removes the matching `kubectl` context, cluster, and user entries
-- removes any stray kind containers left behind by a crashed run
-- **lists any *other* kind clusters still present on your machine** so leftovers don't go unnoticed
+# When you're done:
+make cleanup        # delete namespace + kind cluster
+```
 
-Override the cluster name the same way:
+Run a shorter practice session instead of the full exam:
 
-- `make kind-down KIND_CLUSTER_NAME=my-cluster`
-- `./scripts/kind-cleanup.sh my-cluster`
+```bash
+.venv/bin/ckad-drills run --mode drills --count 5 --namespace drill-01
+```
 
-#### Wiping every kind cluster
-If the cleanup script reports leftover clusters (for example a cluster literally named `kind`, which is what `kind create cluster` produces when no `--name` is given), you have two options:
+On macOS you can double-click `start_ckad_exam.command` to get the same
+exam-mode launch without touching the terminal.
 
-- delete them one by one: `make kind-down KIND_CLUSTER_NAME=<name>`
-- wipe them all at once: `make kind-nuke` (equivalent to `./scripts/kind-cleanup.sh --all`)
+## CLI reference
 
-`make kind-nuke` will iterate over every cluster reported by `kind get clusters` and delete it, along with its kubectl context and any stray containers.
-
-### Install
-You can set up the Python project with:
-
-- `make install`
-
-This creates a local virtual environment in `.venv` and installs the package in editable mode.
-
-After installation, you can use the CLI in either of these ways:
-
-- `source .venv/bin/activate` and then run `ckad-drills ...`
-- run the local executable directly with `.venv/bin/ckad-drills ...`
-
-If you skip installation, `ckad-drills` will not exist on your shell `PATH`. In that case, use `python ckad_gen.py ...` instead.
-
-### Run practice drills
-To start a general drill session from the full question bank:
-
-- `make run`
-
-To start a balanced exam-style session:
-
-- `make exam`
-
-Both targets depend on `make kind-up`, so the local cluster is created automatically (or reused if already up) before drills start.
-
-Exam mode is dynamic: it uses `question_banks/balanced_exam.yaml` as a blueprint of `(domain, topic)` slots, then samples one matching question per slot from the full YAML question bank under `question_banks/`. That means you can get a different exam set on different runs while keeping the intended CKAD weighting (20% / 20% / 15% / 25% / 20% across the five domains).
-
-You can also run the CLI directly:
-
-- `ckad-drills run --mode drills --count 5 --namespace drill-01`
-- `.venv/bin/ckad-drills run --mode drills --count 5 --namespace drill-01`
-- `.venv/bin/ckad-drills run --mode exam --count 10 --namespace drill-02`
-- `python ckad_gen.py help`
-
-### Useful CLI options
-- `--seed 42`
-  - uses a fixed random seed so you can reproduce the same drill selection later
-- `--show-solutions`
-  - explicitly show the solution review section at the end of the session
-- `--hide-solutions`
-  - hide the solution review section and only show scoring output
-- `--namespace drill-01`
-  - rewrites supported namespaces in the drills so you can practice in a controlled namespace
-- `--cleanup objects`
-  - deletes common namespaced Kubernetes resources in your practice namespace after grading
-- `--cleanup namespace`
-  - deletes the entire practice namespace after grading
-- `--cleanup kind-cluster --kind-cluster-name ckad-practice`
-  - deletes the full local kind cluster after grading
-- `cleanup-only`
-  - runs cleanup without generating or grading a session
+| Flag                                          | What it does                                                            |
+| --------------------------------------------- | ----------------------------------------------------------------------- |
+| `--mode {exam,drills}`                        | `exam` uses the balanced blueprint; `drills` samples from the full pool |
+| `--count N`                                   | override the question count (default: 22 exam, 5 drills)                |
+| `--namespace drill-01`                        | rewrite known namespaces in every question to this one                  |
+| `--time-limit 2h` / `--no-timer`              | override or disable the countdown                                       |
+| `--seed 42`                                   | reproducible selection                                                  |
+| `--hide-solutions`                            | skip the end-of-session solution review                                 |
+| `--cleanup {none,objects,namespace,kind-cluster}` | tiered post-session cleanup                                          |
+| `cleanup-only`                                | run cleanup without starting a session                                  |
 
 Exit codes:
 
-- `0` - session completed and the exam was passed (or grading was skipped, e.g. `cleanup-only`)
-- `1` - infrastructure failure (invalid arguments, dataset/cleanup configuration error, cleanup step failed)
-- `2` - exam ran to completion but the final score was below the CKAD pass mark (66%)
+| Code | Meaning                                                          |
+| ---- | ---------------------------------------------------------------- |
+| `0`  | session completed and the exam was passed (≥ 66%)                |
+| `1`  | infrastructure failure — bad args, dataset error, cleanup failed |
+| `2`  | exam ran to completion but the final score was below 66%         |
 
-This lets CI / wrapper scripts distinguish "the runner broke" from "the practice attempt didn't pass".
+This lets CI / shell pipelines distinguish "the runner broke" from "the
+practice attempt didn't pass".
 
-Example:
+## Cleanup tiers
 
-- `ckad-drills run --mode exam --count 5 --namespace drill-01 --seed 42 --hide-solutions`
-- `.venv/bin/ckad-drills run --mode drills --namespace drill-01 --cleanup objects`
-- `.venv/bin/ckad-drills run --mode exam --cleanup kind-cluster --kind-cluster-name ckad-practice`
-- `.venv/bin/ckad-drills cleanup-only --cleanup namespace --namespace drill-01`
+Pick the one that matches what you want gone (all honour
+`NAMESPACE=...` and `KIND_CLUSTER_NAME=...`):
 
-### Colored terminal output
-When you run the tool in an interactive terminal, it uses colored output for:
+| Target                   | Deletes                                                       |
+| ------------------------ | ------------------------------------------------------------- |
+| `make cleanup-objects`   | drill resources inside the practice namespace                 |
+| `make cleanup-namespace` | the entire practice namespace                                 |
+| `make kind-down`         | the local kind cluster + its kubectl context                  |
+| `make kind-nuke`         | **every** kind cluster on the machine (useful for leftovers)  |
+| `make cleanup`           | full teardown: namespace + kind cluster                       |
 
-- section headers
-- drill labels
-- pass/fail status lines
-- final result summary
+Protected namespaces (`default`, `kube-system`, …) are blocked from
+destructive cleanup. `kind-cluster` cleanup requires an explicit
+`--kind-cluster-name`.
 
-This makes it easier to scan the results during a practice session.
+## Question banks
 
-### One-click start on macOS
-If you want a double-click launcher, use:
+The canonical question pool lives under
+[`question_banks/`](./question_banks). Each YAML file is a list of
+drills with `scenario`, `tasks`, declarative `verify` checks, and
+optional `setup` / `teardown` phases.
 
-- `start_ckad_exam.command`
+`question_banks/balanced_exam.yaml` is the **blueprint** — it lists
+`(domain, topic)` slots, not real questions, and the runtime samples a
+matching question from the full pool for each slot. This means exam
+mode varies between runs while staying domain-balanced.
 
-This bootstraps the virtual environment, installs the package, and starts an exam session.
+To extend the pool, drop another `*.yaml` (or legacy `*.csv`) into
+`question_banks/`; see
+[`question_banks/README.md`](./question_banks/README.md) for the full
+schema and the maintenance workflow.
 
-### Test the project itself
-To run the automated unit test suite:
+## Coming soon
 
-- `make test`
+Things on the roadmap, roughly in priority order:
 
-Cleanup is tiered, from least to most destructive. Pick the one that matches what you want gone:
+- 🧠 **Per-question hint streaming.** Right now hints surface only in
+  the end-of-session review. The plan is to expose them on-demand
+  during a drill (`h` to reveal one hint at a time) without affecting
+  the score.
+- 🧪 **Custom playlists.** Save a named subset of question ids ("things
+  I keep failing") and replay them as a focused mini-exam.
+- 📊 **Per-domain analytics across runs.** A small JSON log under
+  `~/.ckad-drills/history.json` so you can see whether your Networking
+  score actually improved over a week of practice.
+- 🔁 **Spaced-repetition mode.** Questions you failed recently get
+  weighted higher in `--mode drills` until you pass them N times in a
+  row.
+- 🧰 **Operator-style per-drill namespaces.** One ephemeral namespace
+  per drill, deleted on teardown, so concurrent drills can't stomp on
+  each other's state.
+- 🪟 **Cross-platform launcher.** A `start_ckad_exam.ps1` /
+  `start_ckad_exam.sh` sibling to the existing macOS `.command`
+  double-click launcher.
+- 🌐 **Question-bank sharing.** A documented convention for publishing
+  community YAML banks (e.g. `ckad-drills install
+  github:user/repo@v1`).
 
-- `make cleanup-objects` — delete drill resources inside the practice namespace (keeps the namespace and the cluster).
-- `make cleanup-namespace` — delete the entire practice namespace (keeps the kind cluster).
-- `make kind-cleanup` (alias for `make kind-down`) — delete the local kind cluster and its kubectl context. Also reports any other leftover kind clusters.
-- `make kind-nuke` — delete **every** kind cluster on the machine. Use this if `make kind-down` warns about leftovers (e.g. a default-named `kind` cluster from a previous `kind create cluster`).
-- `make cleanup-all` — namespace cleanup + `kind-down`, in order. This is the full teardown for the cluster `make kind-up` created.
-- `make cleanup` — friendly alias for `make cleanup-all`.
+If any of these are interesting to you, open an issue or a PR — the
+codebase is structured to make most of them additive rather than
+invasive (see `REFACTORING_TODO.md` for the recent cleanup that paved
+the way).
 
-All cleanup targets honor the `NAMESPACE` variable, which defaults to `drill-01`. If you ran a session in a different namespace, pass it explicitly:
+## Project layout
 
-- `make cleanup-objects NAMESPACE=drill-02`
-- `make cleanup-namespace NAMESPACE=drill-02`
-- `make cleanup NAMESPACE=drill-02`
+```
+src/ckad_drills/
+├── cli.py              # argparse + SessionRunner orchestration
+├── session.py          # load → prepare → grade → cleanup
+├── generator.py        # drill selection, exam blueprint sampling, ns rewriting
+├── yaml_datasets.py    # YamlBankParser
+├── datasets.py         # legacy CSV loader
+├── check_evaluator.py  # equals / contains / regex / exit_code dispatch
+├── grading.py          # score summarization
+├── environment.py      # setup / teardown phase execution
+├── cleanup.py          # tiered post-session cleanup
+├── renderer.py         # ANSI Style + section helpers
+├── timer.py            # SessionTimer with reminders + SIGINT-on-expiry
+├── kubectl_runner.py   # subprocess wrappers
+├── models.py           # frozen dataclasses + runner type aliases
+└── config.py           # CKAD_* constants + question-bank discovery
+question_banks/         # YAML banks + balanced_exam.yaml blueprint
+tests/                  # one test_*.py per source module
+scripts/                # kind-setup / kind-cleanup / a YAML-pipeline demo
+```
 
-Likewise, `make kind-cleanup` honors `KIND_CLUSTER_NAME`:
+## Running the test suite
 
-- `make kind-cleanup KIND_CLUSTER_NAME=my-cluster`
+```bash
+make test       # 77 tests, all offline — no cluster required
+```
 
-### What happens during a session
-1. The tool loads drills from the YAML banks under `question_banks/`
-   (and any optional `*.csv` extension files) — see
-   [`question_banks/README.md`](./question_banks/README.md) for the full
-   format reference.
-2. It rewrites the drill namespaces to your chosen practice namespace.
-3. It shows the scenario and tasks, but hides grading internals until the end.
-4. After you press Enter, it runs the drill's `verify` checks against your cluster.
-5. It prints:
-   - pass/fail per drill
-   - per-domain score breakdown
-   - overall score and percentage
-   - optional solution review with verification commands and hints
-6. If cleanup is enabled, it runs the requested cleanup workflow and prints the cleanup status and commands used.
+The grader, cleanup planner, YAML parser, renderer, and timer are all
+pure-function-friendly and tested with fake runners; no test touches a
+real `kubectl`.
 
-### Question bank structure
-The canonical question pool lives under `question_banks/`:
+## Limitations / honest caveats
 
-- `question_banks/*.yaml` — YAML question banks (preferred). Each entry
-  supports per-check verification (`equals` / `contains` / `not_contains` /
-  `regex` / `exit_code`) and optional `setup` / `teardown` phases.
-- `question_banks/balanced_exam.yaml` — the **exam blueprint**. Listed
-  there are `(domain, topic)` slots, not real questions. The runtime
-  samples a real question from the pool for each slot.
-- `question_banks/*.csv` — optional legacy CSV extension banks. Header
-  schema: `id,domain,topic,scenario,tasks,verify,hints` where `verify` is
-  a single shell pipeline whose exit code decides pass/fail.
-
-In exam mode the CLI reads `balanced_exam.yaml`, then for each slot picks a
-question from the full pool whose `(domain, topic)` matches (falling back
-to domain-only when the exact topic isn't available).
-
-### Extend the question bank
-Drop additional files in `question_banks/`:
-
-- **YAML (recommended)** — `question_banks/*.yaml` or `*.yml`. Full schema
-  and examples in [`question_banks/README.md`](./question_banks/README.md)
-  and [`question_banks/yaml_demo.yaml`](./question_banks/yaml_demo.yaml).
-- **CSV (legacy)** — `question_banks/*.csv`. Same schema as above; one
-  shell-pipeline `verify` per row.
-
-Rules:
-- every question must have a unique `id` across **all** files in
-  `question_banks/` (YAML + CSV).
-- `balanced_exam.yaml` is treated as the exam blueprint and is excluded
-  from the drills-mode pool.
-- YAML drills get picked up in both `drills` mode and `exam` mode; in exam
-  mode they're eligible whenever their `domain` / `topic` matches a
-  blueprint slot.
-
-### Guide: maintain the question bank and exam blueprint
-Use this workflow when you want to add new questions or evolve the exam over time.
-
-#### 1. Understand the roles of the files
-- `question_banks/*.yaml` (excluding `balanced_exam.yaml`)
-  - the canonical question pool
-- `question_banks/balanced_exam.yaml`
-  - the exam blueprint — `(domain, topic)` slots only
-- `question_banks/*.csv`
-  - optional CSV extension banks
-
-#### 2. Add new questions safely
-Drop new YAML files into `question_banks/` (or extend an existing one).
-For each new question:
-- assign a unique `id`
-- set `domain` to one of the five CKAD domains, e.g.
-  `"Application Deployment (20%)"`
-- set `topic` to one of the curriculum sub-topics so exam mode can match
-  a blueprint slot
-- prefer the structured `verify:` list (per-check assertions) over the
-  legacy single-pipeline form
-- author against one of the well-known namespaces (`workloads`,
-  `team-alpha`, `team-beta`, `ckad-practice`, `dev`, `staging`, `prod`) —
-  the runtime rewrites them to whatever `--namespace` you pass
-
-Run `make test` after editing to make sure the YAML parses and ids are unique.
-
-#### 3. How dynamic exam generation works now
-When you run exam mode:
-1. the app loads every YAML / CSV file in `question_banks/` (except
-   `balanced_exam.yaml`) into a single pool
-2. it loads `balanced_exam.yaml` as a list of slots
-3. it shuffles the slots and, for each one, samples a real question from
-   the pool whose `(domain, topic)` matches (or domain-only if no exact
-   topic match exists)
-
-This means the exam varies between runs while staying balanced by domain.
-
-#### 4. When to update `balanced_exam.yaml`
-Update the blueprint when you want to change:
-- the number of questions in the exam
-- the balance across domains
-- the balance across topics
-
-You do **not** need to add every new question to the blueprint. The
-blueprint defines the exam shape; the YAML banks provide the selectable
-questions.
-
-#### 5. Best practice for future growth
-- keep one YAML file per domain so growth is naturally organized
-- assign new ids in domain-prefixed ranges if you prefer (e.g. `Q40`+ for
-  Design and Build) — ids only need to be globally unique, not
-  consecutive
-- only edit `balanced_exam.yaml` when you want to change exam composition
-  rules
-
-That keeps the system easy to extend without turning the exam file into a
-hard-coded static list.
-
-### Cleanup modes
-The CLI supports opt-in cleanup after grading, and also as a standalone command:
-
-- `--cleanup none`
-  - do nothing after the session ends
-- `--cleanup objects`
-  - delete a broad set of namespaced resources in the target namespace
-- `--cleanup namespace`
-  - delete the target namespace itself
-- `--cleanup kind-cluster --kind-cluster-name <name>`
-  - delete a local kind cluster by name
-
-You can also run cleanup without starting a session:
-
-- `.venv/bin/ckad-drills cleanup-only --cleanup objects --namespace drill-01`
-- `.venv/bin/ckad-drills cleanup-only --cleanup namespace --namespace drill-01`
-- `.venv/bin/ckad-drills cleanup-only --cleanup kind-cluster --kind-cluster-name ckad-practice`
-
-### Cleanup safety rules
-To reduce accidental damage:
-
-- cleanup is disabled by default
-- protected namespaces such as `default` and `kube-system` are blocked for destructive namespace or object cleanup
-- `kind-cluster` cleanup requires an explicit `--kind-cluster-name`
-
-### CSV validation behavior
-The loader validates the CSV question banks before starting a session.
-
-It checks for:
-- required headers such as `scenario`, `tasks`, and `verify`
-- at least one identifier column: `id` or `exam_id`
-- required row values for the fields used by the drill engine
-
-If the CSV is invalid, the CLI exits with a friendly error message that includes the file name and the missing columns or missing row values.
-
-## Technical details of this project
-
-### Project structure
-This project uses the Python `src` layout:
-
-- `src/ckad_drills/cli.py` — CLI entrypoint, session flow, and cleanup-only command
-- `src/ckad_drills/session.py` — session orchestration
-- `src/ckad_drills/renderer.py` — terminal output rendering and ANSI colors
-- `src/ckad_drills/datasets.py` — CSV loading, schema validation, bank merging, and blueprint validation
-- `src/ckad_drills/generator.py` — drill selection, dynamic exam generation, and namespace rewriting
-- `src/ckad_drills/grading.py` — grading and score summarization
-- `src/ckad_drills/cleanup.py` — cleanup planning, safety checks, and post-session execution
-- `src/ckad_drills/kubectl_runner.py` — shell execution of verification and cleanup commands
-- `src/ckad_drills/models.py` — typed domain models and summaries
-- `src/ckad_drills/exceptions.py` — custom exceptions for user-facing validation errors
-- `tests/` — unit tests and fixtures
-
-### Design approach
-The code is intentionally split into small modules:
-
-- **CLI layer** handles argument parsing, error handling, and interactive prompts.
-- **Session layer** prepares drills, loads merged question banks, and evaluates them.
-- **Rendering layer** formats drill output, grading reports, and cleanup summaries.
-- **Grading layer** converts verification outcomes into structured score summaries.
-- **Cleanup layer** validates destructive cleanup options and builds cleanup commands safely.
-- **Dataset layer** validates and loads CSV content before the session starts.
-
-This keeps the business logic easier to test and change independently from terminal I/O.
-
-### TDD focus
-The project is structured to support test-driven development:
-
-- dataset loading is testable with fixture CSV files
-- selection and namespace rewriting are pure functions
-- seeded selection is testable for reproducibility
-- dynamic exam generation is testable against fixture blueprints and question banks
-- question bank merging and duplicate-id validation are testable with fixture CSV files
-- grading can be tested with fake runners instead of calling real `kubectl`
-- rendering can be tested as plain string output
-- cleanup planning and safety rules are tested without touching a real cluster
-- CLI help and validation behavior are covered with smoke tests
-
-The unit tests currently use Python's built-in `unittest` framework.
-
-### Grading model
-Each drill is graded by executing the `verify` command from the CSV. The results are summarized into:
-
-- per-drill pass/fail
-- overall score
-- percentage score
-- per-domain scorecard
-- failed drill tracking
-- optional end-of-session solution review
-
-### Notes and limitations
-- The grader is only as good as the `verify` commands in the CSV files.
-- Since verification is command-based, your local cluster state matters.
-- Exam blueprints depend on the base question bank ids staying stable.
-- Cleanup commands are intentionally conservative, but destructive cleanup still deserves care.
-- Colored output is intended for interactive terminals and may not appear the same in every environment.
-- Docker is possible for CI or reproducible development, but for local practice a native environment is simpler because `kubectl` and kubeconfig access are required.
+- The grader is only as good as the `verify` commands in the YAML
+  banks. A bad check passes a wrong answer; a brittle check fails a
+  correct one.
+- `kubectl` and a working kubeconfig are required at runtime —
+  containerizing the runner itself is possible but adds friction for
+  no obvious gain on a local laptop.
+- The real CKAD also tests speed in a remote browser-based terminal.
+  This tool can simulate the time limit but not the input lag.
