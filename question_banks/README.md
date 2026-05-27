@@ -31,6 +31,14 @@ Question ids must be unique across **every** file in this directory
   slot from the same pool. Only the slot metadata in `balanced_exam.yaml`
   matters — its scenario / tasks / verify fields are intentionally minimal.
 
+> **Note on the blueprint's `verify:` field.** Every slot in
+> `balanced_exam.yaml` carries a placeholder `verify: |\n  true` block.
+> The YAML schema requires the field to be present and non-empty, but the
+> runtime **never executes it** in exam mode — it only reads the slot's
+> `domain` and `topic` to pick a real question from the pool. Keep the
+> placeholder as-is when adding or editing slots; do not write real verify
+> commands in `balanced_exam.yaml`.
+
 To change the shape of the exam, edit `balanced_exam.yaml` and add/remove
 slot entries. The default 15-slot mix tracks the published CKAD weighting:
 

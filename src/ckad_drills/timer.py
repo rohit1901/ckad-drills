@@ -12,11 +12,15 @@ Public helpers ``parse_duration`` and ``format_duration_short`` are also
 defined here so the CLI can present user-facing durations consistently.
 """
 
+import logging
 import signal
 import sys
 import threading
 import time
 from typing import Callable, Iterable, TextIO
+
+logger = logging.getLogger(__name__)
+logger.addHandler(logging.NullHandler())
 
 
 def parse_duration(text: str) -> int:
@@ -194,7 +198,9 @@ class SessionTimer:
     def _fire_reminder(self, threshold_seconds: int) -> None:
         if self._cancelled or self._expired:
             return
-        message = f"\n[exam] {format_duration_short(threshold_seconds)} remaining\n"
+        remaining = format_duration_short(threshold_seconds)
+        message = f"\n[exam] {remaining} remaining\n"
+        logger.info("exam timer: %s remaining", remaining)
         try:
             self._stderr.write(message)
             self._stderr.flush()
@@ -206,6 +212,7 @@ class SessionTimer:
             if self._cancelled or self._expired:
                 return
             self._expired = True
+        logger.info("exam timer expired; auto-grading")
         try:
             self._stderr.write("\n[exam] TIME'S UP — auto-grading your work now...\n")
             self._stderr.flush()

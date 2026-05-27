@@ -1,16 +1,15 @@
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 
 from ckad_drills.check_evaluator import evaluate_check
 from ckad_drills.models import (
+    CaptureRunner,
     CheckResult,
+    CommandRunner,
     DomainScore,
     Drill,
     GradeResult,
     GradeSummary,
 )
-
-CommandRunner = Callable[[str], bool]
-CaptureRunner = Callable[[str], tuple[int, str, str]]
 
 
 def grade_drills(

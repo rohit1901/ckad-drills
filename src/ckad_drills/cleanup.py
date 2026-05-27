@@ -1,10 +1,10 @@
 import shlex
 from collections.abc import Callable
 
+from ckad_drills._namespaces import PROTECTED_NAMESPACES
 from ckad_drills.config import (
     CLEANUP_MODES,
     NAMESPACED_CLEANUP_RESOURCES,
-    PROTECTED_NAMESPACES,
 )
 from ckad_drills.exceptions import CleanupConfigurationError
 from ckad_drills.kubectl_runner import run_command

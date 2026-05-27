@@ -7,11 +7,15 @@ grading). Both are run as shell commands; failures are captured in an
 session.
 """
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 
-from ckad_drills.models import Drill, EnvPhaseSummary, EnvStep, EnvStepResult
-
-CaptureRunner = Callable[[str], tuple[int, str, str]]
+from ckad_drills.models import (
+    CaptureRunner,
+    Drill,
+    EnvPhaseSummary,
+    EnvStep,
+    EnvStepResult,
+)
 
 _OUTPUT_LIMIT = 400
 

@@ -107,6 +107,14 @@ You can also run the CLI directly:
 - `cleanup-only`
   - runs cleanup without generating or grading a session
 
+Exit codes:
+
+- `0` - session completed and the exam was passed (or grading was skipped, e.g. `cleanup-only`)
+- `1` - infrastructure failure (invalid arguments, dataset/cleanup configuration error, cleanup step failed)
+- `2` - exam ran to completion but the final score was below the CKAD pass mark (66%)
+
+This lets CI / wrapper scripts distinguish "the runner broke" from "the practice attempt didn't pass".
+
 Example:
 
 - `ckad-drills run --mode exam --count 5 --namespace drill-01 --seed 42 --hide-solutions`

@@ -22,7 +22,7 @@ install:
 	$(BIN)/python -m pip install -e .
 
 test: install
-	$(BIN)/python -m unittest discover -s tests -p 'test_*.py'
+	$(BIN)/python -m unittest discover -s tests -t . -p 'test_*.py'
 
 # Bring up a local kind cluster from kind-config.yaml. Safe to re-run.
 kind-up:

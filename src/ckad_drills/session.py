@@ -10,19 +10,16 @@ from ckad_drills.datasets import load_question_bank
 from ckad_drills.environment import execute_phase
 from ckad_drills.exceptions import DatasetValidationError
 from ckad_drills.generator import build_drills, select_exam_questions, select_questions
-from ckad_drills.grading import (
-    CaptureRunner,
-    CommandRunner,
-    grade_drills,
-    summarize_results,
-)
+from ckad_drills.grading import grade_drills, summarize_results
 from ckad_drills.kubectl_runner import (
     run_command,
     run_command_capture,
     run_verification,
 )
 from ckad_drills.models import (
+    CaptureRunner,
     CleanupSummary,
+    CommandRunner,
     Drill,
     EnvPhaseSummary,
     GradeResult,

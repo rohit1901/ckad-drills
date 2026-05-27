@@ -2,9 +2,17 @@ import random
 import re
 from collections.abc import Sequence
 
-from ckad_drills.config import KNOWN_NAMESPACES
+from ckad_drills._namespaces import KNOWN_NAMESPACES
 from ckad_drills.exceptions import DatasetValidationError
 from ckad_drills.models import Drill, EnvStep, Question, VerifyCheck
+
+# Match any KNOWN_NAMESPACES token, but only when it's a standalone identifier
+# (not part of a filesystem path like ``/dev/null`` or a longer word like
+# ``developer``). Compiled once at import time so we don't rebuild it per
+# render pass.
+_NAMESPACE_PATTERN = re.compile(
+    r"(?<![/\w])(?:" + "|".join(re.escape(n) for n in KNOWN_NAMESPACES) + r")\b"
+)
 
 
 def select_questions(
@@ -68,20 +76,9 @@ def select_exam_questions(
 def rewrite_namespace(text: str, target_namespace: str | None) -> str:
     if not text or not target_namespace:
         return text
-
-    updated_text = text
-    for namespace in KNOWN_NAMESPACES:
-        # Match the namespace as a standalone token, but NOT when it's a path
-        # component (e.g. ``/dev/null``, ``/etc/staging/...``). Without the
-        # negative lookbehind, ``\b`` happily fires on the slash boundary and
-        # rewrites ``/dev/null`` into ``/<target>/null``, which silently breaks
-        # shell redirections in setup / verify commands.
-        updated_text = re.sub(
-            rf"(?<![/\w]){re.escape(namespace)}\b",
-            target_namespace,
-            updated_text,
-        )
-    return updated_text
+    # Single sub() pass over the precompiled alternation; replacement is the
+    # caller-supplied target_namespace (literal, no backreferences).
+    return _NAMESPACE_PATTERN.sub(lambda _m: target_namespace, text)
 
 
 def build_drill(question: Question, target_namespace: str | None) -> Drill:

@@ -1,20 +1,42 @@
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Mapping
 
-# Supported verify-check expectation kinds.
-CHECK_KIND_EQUALS = "equals"
-CHECK_KIND_CONTAINS = "contains"
-CHECK_KIND_NOT_CONTAINS = "not_contains"
-CHECK_KIND_REGEX = "regex"
-CHECK_KIND_EXIT_CODE = "exit_code"
 
-CHECK_KINDS = (
-    CHECK_KIND_EQUALS,
-    CHECK_KIND_CONTAINS,
-    CHECK_KIND_NOT_CONTAINS,
-    CHECK_KIND_REGEX,
-    CHECK_KIND_EXIT_CODE,
-)
+class CheckKind(str, Enum):
+    """Kind tag for a verify-check expectation.
+
+    Inheriting from ``str`` keeps backwards compatibility with code (and
+    tests) that compares ``check.kind == "equals"`` or uses the raw string
+    in YAML I/O.
+    """
+
+    EQUALS = "equals"
+    CONTAINS = "contains"
+    NOT_CONTAINS = "not_contains"
+    REGEX = "regex"
+    EXIT_CODE = "exit_code"
+
+    def __str__(self) -> str:  # pragma: no cover - trivial
+        return self.value
+
+
+# Backwards-compatible aliases used across the codebase.
+CHECK_KIND_EQUALS = CheckKind.EQUALS
+CHECK_KIND_CONTAINS = CheckKind.CONTAINS
+CHECK_KIND_NOT_CONTAINS = CheckKind.NOT_CONTAINS
+CHECK_KIND_REGEX = CheckKind.REGEX
+CHECK_KIND_EXIT_CODE = CheckKind.EXIT_CODE
+
+CHECK_KINDS = tuple(kind.value for kind in CheckKind)
+
+# Type aliases for shell runners injected into session, grading, and
+# environment-phase code paths. Kept here next to the data classes they
+# consume so the rest of the codebase doesn't have to import them from a
+# specific feature module.
+CommandRunner = Callable[[str], bool]
+CaptureRunner = Callable[[str], tuple[int, str, str]]
 
 
 @dataclass(frozen=True)
@@ -23,7 +45,7 @@ class VerifyCheck:
 
     name: str
     run: str
-    kind: str  # one of CHECK_KINDS
+    kind: str  # CheckKind value (str subclass) for YAML compatibility
     value: str  # for exit_code, the integer encoded as string
 
 
@@ -85,6 +107,8 @@ class Drill:
         setup_steps: tuple[EnvStep, ...] | None = None,
         teardown_steps: tuple[EnvStep, ...] | None = None,
     ) -> "Drill":
+        # Copy every field from ``question`` and only override the ones the
+        # caller actually wants to rewrite (typically namespace substitutions).
         return cls(
             question_id=question.question_id,
             domain=question.domain,
@@ -95,9 +119,9 @@ class Drill:
             hints=question.hints,
             checks=question.checks if checks is None else checks,
             setup_steps=question.setup_steps if setup_steps is None else setup_steps,
-            teardown_steps=question.teardown_steps
-            if teardown_steps is None
-            else teardown_steps,
+            teardown_steps=(
+                question.teardown_steps if teardown_steps is None else teardown_steps
+            ),
         )
 
 
